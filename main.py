@@ -1,9 +1,11 @@
 import asyncio
 import logging
+from typing import Callable, Dict, Any, Awaitable
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import uvicorn
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, BaseMiddleware
+from aiogram.types import TelegramObject
 
 from smikhub.config import BOT_TOKEN, CHECK_BOT_TOKEN, PORT, HOST
 from smikhub.db.engine import async_session_factory
@@ -24,10 +26,27 @@ dp_main = Dispatcher()
 dp_check = Dispatcher()
 
 
+# Автоматическая выдача и закрытие сессии БД для каждого события Telegram
+class DbSessionMiddleware(BaseMiddleware):
+    def __init__(self, session_pool):
+        super().__init__()
+        self.session_pool = session_pool
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: Dict[str, Any],
+    ) -> Any:
+        async with self.session_pool() as session:
+            data["session"] = session
+            return await handler(event, data)
+
+
 async def run_bots():
     await asyncio.gather(
-        dp_main.start_polling(main_bot, session_maker=async_session_factory),
-        dp_check.start_polling(check_bot, session_maker=async_session_factory),
+        dp_main.start_polling(main_bot),
+        dp_check.start_polling(check_bot),
         return_exceptions=True
     )
 
@@ -35,6 +54,12 @@ async def run_bots():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await run_auto_migrations()
+
+    # Подключаем сессию БД ко всем входящим апдейтам ботов
+    db_middleware = DbSessionMiddleware(async_session_factory)
+    dp_main.update.outer_middleware(db_middleware)
+    dp_check.update.outer_middleware(db_middleware)
+
     setup_main_bot_handlers(dp_main)
     setup_checkbot_handlers(dp_check)
 
