@@ -624,6 +624,7 @@ async def bot_code_snippet(callback: types.CallbackQuery, session: AsyncSession)
     await callback.answer()
     bot_id = int(callback.data.split(":")[1])
     bot_obj = await session.get(Bot, bot_id)
+    
     code = (
         "import requests\n\n"
         f"url = '{BASE_URL}/api/v1/bot/sponsors'\n"
@@ -632,4 +633,317 @@ async def bot_code_snippet(callback: types.CallbackQuery, session: AsyncSession)
         "response = requests.get(url, headers=headers, params=params).json()\n"
         "sponsors = response.get('sponsors', [])"
     )
-    text = f"📋 **Готовый код интеграции:**\n\n```python\n{code}\n
+    
+    text = f"📋 **Готовый код интеграции:**\n\n```python\n{code}\n```"
+    await callback.message.edit_text(text, reply_markup=kb_cancel(f"bot_manage:{bot_id}", "« Назад"), parse_mode="Markdown")
+
+@router.callback_query(F.data.startswith("bot_delete:"))
+async def bot_delete(callback: types.CallbackQuery, session: AsyncSession):
+    await callback.answer()
+    bot_id = int(callback.data.split(":")[1])
+    bot_obj = await session.get(Bot, bot_id)
+    if bot_obj:
+        await session.delete(bot_obj)
+        await session.commit()
+    await callback.message.edit_text("🗑 Бот успешно удалён из платформы.", reply_markup=kb_cancel("sell_traffic", "« К списку ботов"))
+
+
+# ==========================================
+# Сторонние интеграции 
+# ==========================================
+@router.callback_query(F.data.startswith("bot_integrations:"))
+async def bot_integrations(callback: types.CallbackQuery):
+    await callback.answer()
+    bot_id = int(callback.data.split(":")[1])
+    text = "🌐 **Сторонние интеграции**\n\nВыберите сервис для подключения API токена:"
+    await callback.message.edit_text(text, reply_markup=kb_integrations(bot_id), parse_mode="Markdown")
+
+@router.callback_query(F.data.startswith("integ:subgram:"))
+async def integ_subgram(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    bot_id = int(callback.data.split(":")[2])
+    await state.update_data(bot_id=bot_id)
+    await state.set_state(IntegrationStates.waiting_for_subgram)
+    text = (
+        "🔑 **Подключение Subgram**\n\n"
+        "Subgram — это сервис для заработка на обязательных подписках.\n\n"
+        "⚠️ **Важно:** Весь доход от подписок идёт напрямую в Subgram. SmikHub только показывает спонсоров вашим пользователям и не имеет финансовой связи с доходом от Subgram.\n"
+        "───────────────\n"
+        "📋 **Обязательные настройки в Subgram:**\n\n"
+        "✅ Получать ссылки в API: Вкл.\n"
+        "❌ Показывать анкету: Выкл.\n"
+        "❌ Пол: Выкл.\n"
+        "❌ Возраст: Выкл.\n\n"
+        "⛔️ При других настройках интеграция работать не будет!\n"
+        "───────────────\n\n"
+        "Отправьте токен от Subgram:"
+    )
+    await callback.message.edit_text(text, reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Отмена"), parse_mode="Markdown")
+
+@router.callback_query(F.data.startswith("integ:flyer:"))
+async def integ_flyer(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    bot_id = int(callback.data.split(":")[2])
+    await state.update_data(bot_id=bot_id)
+    await state.set_state(IntegrationStates.waiting_for_flyer)
+    text = (
+        "🔑 **Подключение Flyer**\n\n"
+        "Flyer — это сервис для заработка на обязательных подписках.\n\n"
+        "⚠️ **Важно:** Весь доход от подписок идёт напрямую в Flyer. SmikHub только показывает спонсоров вашим пользователям и не имеет финансовой связи с доходом от Flyer.\n"
+        "───────────────\n"
+        "📋 **Как добавить бота:**\n\n"
+        "1. Перейдите в Flyer\n"
+        "2. Добавьте вашего бота как **ЗАДАНИЯ**\n\n"
+        "⛔️ **Не добавляйте бота как «Обязательная подписка»!**\n"
+        "Если бот уже добавлен как ОП — удалите и добавьте заново как «Задания».\n"
+        "───────────────\n\n"
+        "Отправьте токен от Flyer:"
+    )
+    await callback.message.edit_text(text, reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Отмена"), parse_mode="Markdown")
+
+@router.callback_query(F.data.startswith("integ:traffy:"))
+async def integ_traffy(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    bot_id = int(callback.data.split(":")[2])
+    await state.update_data(bot_id=bot_id)
+    await state.set_state(IntegrationStates.waiting_for_traffy)
+    text = (
+        "🔑 **Подключение Traffy**\n\n"
+        "Traffy — сервис заданий для заработка на обязательных подписках.\n\n"
+        "⚠️ **Важно:** Весь доход от заданий идёт напрямую в Traffy. SmikHub только показывает задания вашим пользователям и не имеет финансовой связи с доходом от Traffy.\n\n"
+        "Получите Publisher API ключ в `@Traffy_robot` и отправьте его:"
+    )
+    await callback.message.edit_text(text, reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Отмена"), parse_mode="Markdown")
+
+@router.callback_query(F.data.startswith("integ:piarflow:"))
+async def integ_piarflow(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    bot_id = int(callback.data.split(":")[2])
+    await state.update_data(bot_id=bot_id)
+    await state.set_state(IntegrationStates.waiting_for_piarflow)
+    text = (
+        "🔑 **Подключение PiarFlow**\n\n"
+        "PiarFlow — биржа рекламы и обязательных подписок.\n\n"
+        "⚠️ **Важно:** Весь доход идёт напрямую на ваш баланс в PiarFlow. SmikHub интегрирует API только для отображения спонсоров.\n\n"
+        "Получите API ключ (Publisher Token) в личном кабинете PiarFlow и отправьте его сюда:"
+    )
+    await callback.message.edit_text(text, reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Отмена"), parse_mode="Markdown")
+
+@router.callback_query(F.data.startswith("integ:tgrass:"))
+async def integ_tgrass(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    bot_id = int(callback.data.split(":")[2])
+    await state.update_data(bot_id=bot_id)
+    await state.set_state(IntegrationStates.waiting_for_tgrass)
+    text = (
+        "🔑 **Подключение TgGrass**\n\n"
+        "TgGrass — платформа монетизации трафика Telegram.\n\n"
+        "⚠️ **Важно:** Средства за подписки зачисляются в вашем кабинете TgGrass.\n\n"
+        "Скопируйте ваш API токен в боте `@tgrass_bot` (в разделе интеграции/API) и отправьте его:"
+    )
+    await callback.message.edit_text(text, reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Отмена"), parse_mode="Markdown")
+
+async def _save_integration_token(message: types.Message, state: FSMContext, session: AsyncSession, field_name: str, service_name: str):
+    token = message.text.strip()
+    data = await state.get_data()
+    bot_id = data.get("bot_id")
+    await state.clear()
+
+    bot_obj = await session.get(Bot, bot_id)
+    if bot_obj:
+        try:
+            setattr(bot_obj, field_name, token)
+            await session.commit()
+            await message.answer(f"✅ Токен {service_name} успешно сохранён и подключён к боту!", reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Назад к сервисам"))
+        except Exception:
+            await message.answer("⚠️ Ошибка сохранения. Выполните команду /fixdb от имени администратора.", reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Назад к сервисам"))
+    else:
+        await message.answer("Бот не найден.", reply_markup=kb_cancel("sell_traffic", "« К списку ботов"))
+
+@router.message(IntegrationStates.waiting_for_subgram)
+async def proc_subgram(message: types.Message, state: FSMContext, session: AsyncSession):
+    await _save_integration_token(message, state, session, "subgram_token", "Subgram")
+
+@router.message(IntegrationStates.waiting_for_flyer)
+async def proc_flyer(message: types.Message, state: FSMContext, session: AsyncSession):
+    await _save_integration_token(message, state, session, "flyer_token", "Flyer")
+
+@router.message(IntegrationStates.waiting_for_traffy)
+async def proc_traffy(message: types.Message, state: FSMContext, session: AsyncSession):
+    await _save_integration_token(message, state, session, "traffy_token", "Traffy")
+
+@router.message(IntegrationStates.waiting_for_piarflow)
+async def proc_piarflow(message: types.Message, state: FSMContext, session: AsyncSession):
+    await _save_integration_token(message, state, session, "piarflow_token", "PiarFlow")
+
+@router.message(IntegrationStates.waiting_for_tgrass)
+async def proc_tgrass(message: types.Message, state: FSMContext, session: AsyncSession):
+    await _save_integration_token(message, state, session, "tgrass_token", "TgGrass")
+
+
+# ==========================================
+# Купить ОП (Создание и управление кампаниями)
+# ==========================================
+@router.callback_query(F.data == "nav:buy_traffic")
+async def nav_buy_traffic(callback: types.CallbackQuery, session: AsyncSession):
+    await callback.answer()
+    orders = (await session.execute(
+        select(Order).where(Order.user_id == callback.from_user.id)
+    )).scalars().all()
+
+    text = "📢 **Закупка трафика (Купить ОП)**\n\nСоздавайте рекламные кампании для набора живых подписчиков в каналы через сеть ботов SmikHub."
+    await callback.message.edit_text(text, reply_markup=kb_buy_traffic(orders), parse_mode="Markdown")
+
+@router.callback_query(F.data == "nav:create_order")
+async def nav_create_order(callback: types.CallbackQuery, session: AsyncSession, state: FSMContext):
+    await callback.answer()
+    user = await session.get(User, callback.from_user.id)
+    balance = float(user.balance) if user and user.balance else 0.0
+
+    if balance < 100.0:
+        text = f"⚠️ **Недостаточно средств**\n\nТекущий баланс: **{balance:.2f} RUB**\nМинимальный бюджет: **100.00 RUB**.\nПополните баланс в разделе «👤 Кабинет»."
+        await callback.message.edit_text(text, reply_markup=kb_cancel("buy_traffic", "« Назад"), parse_mode="Markdown")
+        return
+
+    await state.set_state(CampaignStates.waiting_for_channel)
+    text = "✍️ **Шаг 1/3:** Отправьте ссылку на канал (например, `https://t.me/mychannel`):"
+    await callback.message.edit_text(text, reply_markup=kb_cancel("buy_traffic", "« Отмена"), parse_mode="Markdown")
+
+@router.message(CampaignStates.waiting_for_channel)
+async def process_campaign_channel(message: types.Message, state: FSMContext):
+    link = message.text.strip()
+    if "t.me/" not in link:
+        await message.answer("⚠️ Отправьте ссылку Telegram (https://t.me/...):")
+        return
+    await state.update_data(channel_link=link)
+    await state.set_state(CampaignStates.waiting_for_budget)
+    await message.answer("✍️ **Шаг 2/3:** Введите общий бюджет кампании в рублях (минимум 100 RUB):")
+
+@router.message(CampaignStates.waiting_for_budget)
+async def process_campaign_budget(message: types.Message, state: FSMContext):
+    try:
+        budget = float(message.text.strip())
+        if budget < 100:
+            raise ValueError()
+    except ValueError:
+        await message.answer("⚠️ Введите число не менее 100 руб.:")
+        return
+    await state.update_data(budget=budget)
+    await state.set_state(CampaignStates.waiting_for_price)
+    await message.answer("✍️ **Шаг 3/3:** Введите ставку за 1 подписчика (CPC) в рублях (например, 1.20):")
+
+@router.message(CampaignStates.waiting_for_price)
+async def process_campaign_price(message: types.Message, state: FSMContext, session: AsyncSession):
+    try:
+        price = float(message.text.strip())
+        if price < 0.2:
+            raise ValueError()
+    except ValueError:
+        await message.answer("⚠️ Минимальная ставка — 0.20 RUB:")
+        return
+
+    data = await state.get_data()
+    channel_link = data.get("channel_link")
+    budget = data.get("budget")
+    await state.clear()
+
+    user = await session.get(User, message.from_user.id)
+    if float(user.balance) < budget:
+        await message.answer("⚠️ На балансе недостаточно средств.", reply_markup=kb_main_menu(is_admin_user(message.from_user.id)))
+        return
+
+    user.balance -= Decimal(str(budget))
+    new_order = Order(
+        user_id=message.from_user.id,
+        channel_id=-1001234567890,
+        channel_title="Мой канал",
+        channel_link=channel_link,
+        total_budget=Decimal(str(budget)),
+        remaining_budget=Decimal(str(budget)),
+        cpc_price=Decimal(str(price)),
+        status="active"
+    )
+    session.add(new_order)
+    await session.commit()
+
+    await message.answer(
+        f"✅ **Рекламная кампания #{new_order.id} успешно запущена!**\n\n• Бюджет: **{budget:.2f} RUB**\n• Ставка за подписку: **{price:.2f} RUB**\n• Статус: **🟢 Активен**",
+        reply_markup=kb_main_menu(is_admin_user(message.from_user.id)),
+        parse_mode="Markdown"
+    )
+
+@router.callback_query(F.data.startswith("order_view:"))
+@router.callback_query(F.data.startswith("order_refresh:"))
+async def order_view(callback: types.CallbackQuery, session: AsyncSession):
+    await callback.answer()
+    order_id = int(callback.data.split(":")[1])
+    order_obj = await session.get(Order, order_id)
+
+    if not order_obj:
+        await callback.message.edit_text("Заказ не найден.", reply_markup=kb_cancel("buy_traffic"))
+        return
+
+    spent = float(order_obj.total_budget - order_obj.remaining_budget)
+    price = float(order_obj.cpc_price)
+    status_emoji = "🟢 Активен" if order_obj.status == "active" else "⏸ На паузе"
+    now_str = datetime.now().strftime('%H:%M:%S')
+
+    text = (
+        f"🛍 **Заказ #{order_obj.id}**\n\n"
+        "Трафик: Подписки\n"
+        "Назначение: Канал/чат\n"
+        f"Статус: {status_emoji}\n"
+        f"Цена: {price:.2f} ₽\n"
+        f"Потрачено: {spent:.2f} ₽\n\n"
+        f"_🔄 Обновлено: {now_str}_"
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=kb_order_control(order_obj.id, order_obj.status, price), parse_mode="Markdown")
+    except Exception:
+        pass
+
+@router.callback_query(F.data.startswith("order_toggle:"))
+async def order_toggle(callback: types.CallbackQuery, session: AsyncSession):
+    order_id = int(callback.data.split(":")[1])
+    order_obj = await session.get(Order, order_id)
+    if order_obj:
+        order_obj.status = "paused" if order_obj.status == "active" else "active"
+        await session.commit()
+        await callback.answer("Статус изменён")
+    await order_view(callback, session)
+
+@router.callback_query(F.data.startswith("order_delete:"))
+async def order_delete(callback: types.CallbackQuery, session: AsyncSession):
+    await callback.answer()
+    order_id = int(callback.data.split(":")[1])
+    order_obj = await session.get(Order, order_id)
+    if order_obj:
+        user = await session.get(User, order_obj.user_id)
+        if user:
+            user.balance += order_obj.remaining_budget
+        await session.delete(order_obj)
+        await session.commit()
+    await callback.message.edit_text("🗑 Заказ удалён. Неизрасходованный бюджет возвращён на баланс.", reply_markup=kb_cancel("buy_traffic", "« К списку кампаний"))
+
+@router.callback_query(F.data.startswith("order_price:"))
+@router.callback_query(F.data.startswith("order_settings:"))
+@router.callback_query(F.data.startswith("order_placements:"))
+@router.callback_query(F.data.startswith("order_target_"))
+async def order_targets_click(callback: types.CallbackQuery):
+    await callback.answer("⚙️ Таргетинг активен и применяется ко всем ботам сети.", show_alert=True)
+
+# ==========================================
+# Партнёрская программа
+# ==========================================
+@router.callback_query(F.data == "nav:referrals")
+async def nav_referrals(callback: types.CallbackQuery):
+    await callback.answer()
+    bot_me = await callback.bot.get_me()
+    link = f"https://t.me/{bot_me.username}?start=ref_{callback.from_user.id}"
+    text = (
+        "🤝 **Партнёрская программа SmikHub**\n\n"
+        "• **5%** от дохода ботов 1-го уровня\n"
+        "• **2%** от дохода ботов 2-го уровня\n\n"
+        f"🔗 Ваша реферальная ссылка:\n`{link}`"
+    )
+    await callback.message.edit_text(text, reply_markup=kb_cancel("main_menu", "« Назад"), parse_mode="Markdown")
