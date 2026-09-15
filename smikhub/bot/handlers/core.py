@@ -11,7 +11,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from smikhub.db.models import User, Bot, Order
-from smikhub.config import BASE_URL, CRYPTO_BOT_TOKEN
+from smikhub.config import CRYPTO_BOT_TOKEN
 import smikhub.config as config
 
 router = Router()
@@ -43,7 +43,7 @@ class IntegrationStates(StatesGroup):
     waiting_for_tgrass = State()
 
 # ==========================================
-# Клавиатуры
+# Клавиатуры интерфейса
 # ==========================================
 def kb_main_menu(is_admin: bool = False) -> InlineKeyboardMarkup:
     rows = [
@@ -105,6 +105,44 @@ def kb_bot_settings(bot_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="❌ Удалить бота", callback_data=f"bot_delete:{bot_id}")],
         [InlineKeyboardButton(text="« Назад к списку ботов", callback_data="nav:sell_traffic")]
     ])
+
+# --- Новые клавиатуры для сеток выбора ---
+def kb_price_grid(bot_id: int) -> InlineKeyboardMarkup:
+    buttons = []
+    # Диапазон 1.0 - 4.9
+    for i in range(10, 50, 5):
+        row = []
+        for j in range(5):
+            val = (i + j) / 10.0
+            row.append(InlineKeyboardButton(text=f"{val:.1f}р.", callback_data=f"set_prc:{bot_id}:{val:.1f}"))
+        buttons.append(row)
+    # Диапазон 5.0 - 14.0
+    for i in range(5, 15, 5):
+        row = []
+        for j in range(5):
+            val = float(i + j)
+            row.append(InlineKeyboardButton(text=f"{val:.1f}р.", callback_data=f"set_prc:{bot_id}:{val:.1f}"))
+        buttons.append(row)
+    # Завершающая строка
+    buttons.append([InlineKeyboardButton(text="15.0р.", callback_data=f"set_prc:{bot_id}:15.0")])
+    buttons.append([InlineKeyboardButton(text="« Отмена", callback_data=f"bot_manage:{bot_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def kb_sponsors_grid(bot_id: int) -> InlineKeyboardMarkup:
+    buttons = []
+    row1 = [InlineKeyboardButton(text=f"{i}", callback_data=f"set_spn:{bot_id}:{i}") for i in range(1, 6)]
+    row2 = [InlineKeyboardButton(text=f"{i}", callback_data=f"set_spn:{bot_id}:{i}") for i in range(6, 11)]
+    buttons.append(row1)
+    buttons.append(row2)
+    buttons.append([InlineKeyboardButton(text="« Отмена", callback_data=f"bot_manage:{bot_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def kb_delete_confirm(bot_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚠️ Да, удалить бота", callback_data=f"del_conf:{bot_id}")],
+        [InlineKeyboardButton(text="« Отмена", callback_data=f"bot_manage:{bot_id}")]
+    ])
+# ------------------------------------------
 
 def kb_integrations(bot_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -174,18 +212,16 @@ def kb_cancel(target: str = "main_menu", text_btn: str = "« Отмена") -> I
 # ПРОВЕРКА АДМИНА
 # ==========================================
 def is_admin_user(user_id: int) -> bool:
-    # Железобетонная проверка твоего личного ID
     if str(user_id) == "6470511118":
         return True
-        
     admin_id = getattr(config, 'ADMIN_CHAT_ID', None)
     admin_ids = getattr(config, 'ADMIN_USER_IDS', [])
-    
     if admin_id and str(user_id) == str(admin_id):
         return True
     if admin_ids and str(user_id) in str(admin_ids):
         return True
     return False
+
 
 # ==========================================
 # Главное меню и /start
@@ -193,8 +229,7 @@ def is_admin_user(user_id: int) -> bool:
 @router.message(CommandStart(deep_link=True))
 @router.message(CommandStart())
 async def start_cmd(message: types.Message, session: AsyncSession, command: CommandObject = None):
-    
-    # --- АВТОМАТИЧЕСКАЯ МИГРАЦИЯ БАЗЫ ---
+    # АВТОМАТИЧЕСКАЯ МИГРАЦИЯ БАЗЫ
     queries = [
         "ALTER TABLE bots ADD COLUMN subgram_token VARCHAR;",
         "ALTER TABLE bots ADD COLUMN flyer_token VARCHAR;",
@@ -208,7 +243,6 @@ async def start_cmd(message: types.Message, session: AsyncSession, command: Comm
             await session.commit()
         except Exception:
             await session.rollback()
-    # -------------------------------------
 
     uid = message.from_user.id
     user = await session.get(User, uid)
@@ -241,14 +275,13 @@ async def nav_main_menu(callback: types.CallbackQuery, state: FSMContext):
 
 
 # ==========================================
-# Ремонт базы данных (СКРЫТАЯ КОМАНДА)
+# Ремонт БД
 # ==========================================
 @router.message(Command("fixdb"))
 async def fix_db_command(message: types.Message, session: AsyncSession):
     if not is_admin_user(message.from_user.id):
         await message.answer("Доступ только для администратора.")
         return
-        
     queries = [
         "ALTER TABLE bots ADD COLUMN subgram_token VARCHAR;",
         "ALTER TABLE bots ADD COLUMN flyer_token VARCHAR;",
@@ -256,18 +289,13 @@ async def fix_db_command(message: types.Message, session: AsyncSession):
         "ALTER TABLE bots ADD COLUMN piarflow_token VARCHAR;",
         "ALTER TABLE bots ADD COLUMN tgrass_token VARCHAR;"
     ]
-    
-    success = 0
     for q in queries:
         try:
             await session.execute(text(q))
             await session.commit()
-            success += 1
         except Exception:
             await session.rollback()
-            
     await message.answer(f"✅ База данных обновлена!\n\nРазделы «Продать ОП» и «Админка» должны работать.")
-
 
 # ==========================================
 # Админка
@@ -324,7 +352,7 @@ async def admin_broadcast(callback: types.CallbackQuery):
 
 
 # ==========================================
-# Кабинет пользователя (Пополнить / Вывести)
+# Кабинет пользователя
 # ==========================================
 @router.callback_query(F.data == "nav:cabinet")
 async def nav_cabinet(callback: types.CallbackQuery, session: AsyncSession, state: FSMContext):
@@ -546,7 +574,6 @@ async def process_add_bot_username(message: types.Message, state: FSMContext, se
 
     try:
         admin_msg = f"🔔 **Новый бот на модерацию!**\n\n• Бот: @{new_bot.username}\n• Владелец ID: `{message.from_user.id}`\n• Имя: @{message.from_user.username or 'без username'}"
-        # Отправляем уведомление на твой личный ID
         await message.bot.send_message(
             6470511118,
             admin_msg,
@@ -586,7 +613,7 @@ async def admin_reject_bot(callback: types.CallbackQuery, session: AsyncSession)
     await callback.message.edit_text(f"❌ Бот #{bot_id} отклонён.")
 
 # ==========================================
-# Настройки бота (Цена, Спонсоры)
+# Настройки бота (Цена, Спонсоры, Удаление)
 # ==========================================
 @router.callback_query(F.data.startswith("bot_manage:"))
 async def bot_manage(callback: types.CallbackQuery, session: AsyncSession):
@@ -600,43 +627,42 @@ async def bot_manage(callback: types.CallbackQuery, session: AsyncSession):
     await callback.message.edit_text(text_msg, reply_markup=kb_bot_settings(bot_id), parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("bot_edit_price:"))
-async def bot_edit_price(callback: types.CallbackQuery, session: AsyncSession):
+async def bot_edit_price(callback: types.CallbackQuery):
+    await callback.answer()
     bot_id = int(callback.data.split(":")[1])
+    text_msg = "Задайте минимальную цену за подписчика:"
+    await callback.message.edit_text(text_msg, reply_markup=kb_price_grid(bot_id))
+
+@router.callback_query(F.data.startswith("set_prc:"))
+async def set_prc(callback: types.CallbackQuery, session: AsyncSession):
+    parts = callback.data.split(":")
+    bot_id = int(parts[1])
+    price = Decimal(parts[2])
     bot_obj = await session.get(Bot, bot_id)
-    if not bot_obj:
-        await callback.answer("Ошибка: бот не найден.")
-        return
-    current = float(bot_obj.min_price)
-    next_price = 1.00 if current == 0.50 else (1.50 if current == 1.00 else (2.00 if current == 1.50 else 0.50))
-    bot_obj.min_price = Decimal(str(next_price))
-    await session.commit()
-    
-    now_str = datetime.now().strftime('%H:%M:%S')
-    text_msg = f"⚙️ **Управление ботом @{bot_obj.username}**\n\n• Мин. цена: **{float(bot_obj.min_price):.2f} RUB**\n• Лимит спонсоров: **{bot_obj.max_sponsors}**\n• Рейтинг качества: **{bot_obj.quality_score * 100:.0f}%**\n\n_🔄 Обновлено: {now_str}_\nНастройте параметры кнопками ниже:"
-    try:
-        await callback.message.edit_text(text_msg, reply_markup=kb_bot_settings(bot_id), parse_mode="Markdown")
-        await callback.answer(f"Цена изменена на {next_price:.2f} RUB")
-    except Exception:
-        await callback.answer("Цена изменена.")
+    if bot_obj:
+        bot_obj.min_price = price
+        await session.commit()
+        await callback.answer(f"Цена изменена на {price:.1f} RUB")
+    await bot_manage(callback, session)
 
 @router.callback_query(F.data.startswith("bot_edit_sponsors:"))
-async def bot_edit_sponsors(callback: types.CallbackQuery, session: AsyncSession):
+async def bot_edit_sponsors(callback: types.CallbackQuery):
+    await callback.answer()
     bot_id = int(callback.data.split(":")[1])
+    text_msg = "Задайте лимит спонсоров (от 1 до 10):"
+    await callback.message.edit_text(text_msg, reply_markup=kb_sponsors_grid(bot_id))
+
+@router.callback_query(F.data.startswith("set_spn:"))
+async def set_spn(callback: types.CallbackQuery, session: AsyncSession):
+    parts = callback.data.split(":")
+    bot_id = int(parts[1])
+    sponsors = int(parts[2])
     bot_obj = await session.get(Bot, bot_id)
-    if not bot_obj:
-        await callback.answer("Ошибка: бот не найден.")
-        return
-    new_limit = 1 if bot_obj.max_sponsors >= 5 else (bot_obj.max_sponsors + 1)
-    bot_obj.max_sponsors = new_limit
-    await session.commit()
-    
-    now_str = datetime.now().strftime('%H:%M:%S')
-    text_msg = f"⚙️ **Управление ботом @{bot_obj.username}**\n\n• Мин. цена: **{float(bot_obj.min_price):.2f} RUB**\n• Лимит спонсоров: **{bot_obj.max_sponsors}**\n• Рейтинг качества: **{bot_obj.quality_score * 100:.0f}%**\n\n_🔄 Обновлено: {now_str}_\nНастройте параметры кнопками ниже:"
-    try:
-        await callback.message.edit_text(text_msg, reply_markup=kb_bot_settings(bot_id), parse_mode="Markdown")
-        await callback.answer(f"Лимит спонсоров: {new_limit}")
-    except Exception:
-        await callback.answer("Лимит изменён.")
+    if bot_obj:
+        bot_obj.max_sponsors = sponsors
+        await session.commit()
+        await callback.answer(f"Лимит изменён на {sponsors}")
+    await bot_manage(callback, session)
 
 @router.callback_query(F.data.startswith("bot_show_token:"))
 async def bot_show_token(callback: types.CallbackQuery, session: AsyncSession):
@@ -651,26 +677,35 @@ async def bot_code_snippet(callback: types.CallbackQuery, session: AsyncSession)
     await callback.answer()
     bot_id = int(callback.data.split(":")[1])
     bot_obj = await session.get(Bot, bot_id)
+    
     code = (
         "import requests\n\n"
-        f"url = '{BASE_URL}/api/v1/bot/sponsors'\n"
+        "url = 'https://smikhub-production.up.railway.app/api/v1/bot/sponsors'\n"
         f"headers = {{'Authorization': 'Bearer {bot_obj.integration_token}'}}\n"
         "params = {'user_id': message.from_user.id}\n"
         "response = requests.get(url, headers=headers, params=params).json()\n"
         "sponsors = response.get('sponsors', [])"
     )
-    text_msg = f"📋 **Готовый код интеграции:**\n\n```python\n{code}\n```"
-    await callback.message.edit_text(text_msg, reply_markup=kb_cancel(f"bot_manage:{bot_id}", "« Назад"), parse_mode="Markdown")
+    # Используем HTML, чтобы код не сломался и выглядел точно как на скриншоте (легко копировался)
+    text_msg = f"📋 <b>Готовый код интеграции:</b>\n\n<pre><code class=\"language-python\">{code}</code></pre>"
+    await callback.message.edit_text(text_msg, reply_markup=kb_cancel(f"bot_manage:{bot_id}", "« Назад"), parse_mode="HTML")
 
 @router.callback_query(F.data.startswith("bot_delete:"))
-async def bot_delete(callback: types.CallbackQuery, session: AsyncSession):
+async def bot_delete(callback: types.CallbackQuery):
     await callback.answer()
+    bot_id = int(callback.data.split(":")[1])
+    text_msg = "Вы уверены, что хотите удалить этого бота? Это действие нельзя отменить."
+    await callback.message.edit_text(text_msg, reply_markup=kb_delete_confirm(bot_id))
+
+@router.callback_query(F.data.startswith("del_conf:"))
+async def bot_delete_confirm(callback: types.CallbackQuery, session: AsyncSession):
+    await callback.answer("Бот удалён")
     bot_id = int(callback.data.split(":")[1])
     bot_obj = await session.get(Bot, bot_id)
     if bot_obj:
         await session.delete(bot_obj)
         await session.commit()
-    await callback.message.edit_text("🗑 Бот успешно удалён из платформы.", reply_markup=kb_cancel("sell_traffic", "« К списку ботов"))
+    await nav_sell_traffic(callback, session)
 
 # ==========================================
 # Сторонние интеграции 
@@ -936,7 +971,7 @@ async def order_toggle(callback: types.CallbackQuery, session: AsyncSession):
     await order_view(callback, session)
 
 @router.callback_query(F.data.startswith("order_delete:"))
-async def order_delete(callback: types.CallbackQuery, session: AsyncSession):
+async def order_delete_order(callback: types.CallbackQuery, session: AsyncSession):
     await callback.answer()
     order_id = int(callback.data.split(":")[1])
     order_obj = await session.get(Order, order_id)
