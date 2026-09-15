@@ -19,9 +19,6 @@ class CampaignStates(StatesGroup):
     waiting_for_price = State()
 
 
-# -------------------------------------------------------------
-# Клавиатуры интерфейса
-# -------------------------------------------------------------
 def kb_main_menu(is_admin: bool = False) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="👤 Кабинет", callback_data="nav:cabinet")],
@@ -101,9 +98,6 @@ def kb_back(target: str = "main_menu") -> InlineKeyboardMarkup:
     ])
 
 
-# -------------------------------------------------------------
-# Главное меню
-# -------------------------------------------------------------
 @router.message(CommandStart(deep_link=True))
 @router.message(CommandStart())
 async def start_cmd(message: types.Message, session: AsyncSession, command: CommandObject = None):
@@ -124,26 +118,19 @@ async def start_cmd(message: types.Message, session: AsyncSession, command: Comm
         session.add(user)
         await session.commit()
 
-    text = (
-        "👋 **Добро пожаловать в SmikHub!**\n\n"
-        "Биржа обязательных подписок (ОП) в Telegram.\n"
-        "Монетизируйте аудиторию своих ботов или закупайте целевой трафик на каналы."
-    )
+    text = "👋 Добро пожаловать в SmikHub!\n\nБиржа обязательных подписок (ОП) в Telegram.\nМонетизируйте аудиторию своих ботов или закупайте целевой трафик на каналы."
     is_admin = (uid == ADMIN_CHAT_ID)
-    await message.answer(text, reply_markup=kb_main_menu(is_admin), parse_mode="Markdown")
+    await message.answer(text, reply_markup=kb_main_menu(is_admin))
 
 
 @router.callback_query(F.data == "nav:main_menu")
 async def nav_main_menu(callback: types.CallbackQuery):
     await callback.answer()
     is_admin = (callback.from_user.id == ADMIN_CHAT_ID)
-    text = "👋 **Главное меню SmikHub**\n\nВыберите нужный раздел:"
-    await callback.message.edit_text(text, reply_markup=kb_main_menu(is_admin), parse_mode="Markdown")
+    text = "👋 Главное меню SmikHub\n\nВыберите нужный раздел:"
+    await callback.message.edit_text(text, reply_markup=kb_main_menu(is_admin))
 
 
-# -------------------------------------------------------------
-# Админ-панель
-# -------------------------------------------------------------
 @router.callback_query(F.data == "nav:admin")
 async def nav_admin(callback: types.CallbackQuery, session: AsyncSession):
     if callback.from_user.id != ADMIN_CHAT_ID:
@@ -155,17 +142,12 @@ async def nav_admin(callback: types.CallbackQuery, session: AsyncSession):
     bots_count = len((await session.execute(select(Bot))).scalars().all())
     orders_count = len((await session.execute(select(Order))).scalars().all())
 
-    text = (
-        "🛠 **Административная панель SmikHub**\n\n"
-        f"👥 Всего пользователей: `{users_count}`\n"
-        f"🤖 Всего ботов: `{bots_count}`\n"
-        f"📢 Всего заказов: `{orders_count}`"
-    )
+    text = f"🛠 Административная панель SmikHub\n\n👥 Всего пользователей: {users_count}\n🤖 Всего ботов: {bots_count}\n📢 Всего заказов: {orders_count}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Сделать рассылку", callback_data="admin:broadcast")],
         [InlineKeyboardButton(text="« Назад в меню", callback_data="nav:main_menu")]
     ])
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    await callback.message.edit_text(text, reply_markup=kb)
 
 
 @router.callback_query(F.data == "admin:broadcast")
@@ -173,55 +155,39 @@ async def admin_broadcast(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_CHAT_ID:
         return
     await callback.answer()
-    text = "📢 **Рассылка сообщений**\n\nФункция отправки сообщения всей базе пользователей."
-    await callback.message.edit_text(text, reply_markup=kb_back(target="admin"), parse_mode="Markdown")
+    text = "📢 Рассылка сообщений\n\nФункция отправки сообщения всей базе пользователей."
+    await callback.message.edit_text(text, reply_markup=kb_back(target="admin"))
 
 
-# -------------------------------------------------------------
-# Кабинет
-# -------------------------------------------------------------
 @router.callback_query(F.data == "nav:cabinet")
 async def nav_cabinet(callback: types.CallbackQuery, session: AsyncSession):
     await callback.answer()
     user = await session.get(User, callback.from_user.id)
     balance = float(user.balance) if user and user.balance else 0.0
 
-    text = (
-        f"👤 **Личный кабинет**\n\n"
-        f"🆔 Ваш ID: `{callback.from_user.id}`\n"
-        f"💰 Баланс: **{balance:.2f} RUB**\n\n"
-        f"Выберите действие для управления балансом:"
-    )
-    await callback.message.edit_text(text, reply_markup=kb_cabinet(), parse_mode="Markdown")
+    text = f"👤 Личный кабинет\n\n🆔 Ваш ID: {callback.from_user.id}\n💰 Баланс: {balance:.2f} RUB\n\nВыберите действие для управления балансом:"
+    await callback.message.edit_text(text, reply_markup=kb_cabinet())
 
 
 @router.callback_query(F.data == "nav:topup_menu")
 async def nav_topup_menu(callback: types.CallbackQuery):
     await callback.answer()
-    text = "💳 **Выберите способ пополнения баланса:**"
-    await callback.message.edit_text(text, reply_markup=kb_topup(), parse_mode="Markdown")
+    text = "💳 Выберите способ пополнения баланса:"
+    await callback.message.edit_text(text, reply_markup=kb_topup())
 
 
 @router.callback_query(F.data == "topup:cryptobot")
 async def topup_cryptobot(callback: types.CallbackQuery):
     await callback.answer()
-    text = (
-        "🤖 **Пополнение через CryptoBot**\n\n"
-        "Поддерживаемые криптовалюты: USDT, TON, BTC, NOT.\n"
-        "Баланс начисляется моментально после подтверждения транзакции."
-    )
-    await callback.message.edit_text(text, reply_markup=kb_back(target="topup_menu"), parse_mode="Markdown")
+    text = "🤖 Пополнение через CryptoBot\n\nПоддерживаемые криптовалюты: USDT, TON, BTC, NOT.\nБаланс начисляется моментально после подтверждения транзакции."
+    await callback.message.edit_text(text, reply_markup=kb_back(target="topup_menu"))
 
 
 @router.callback_query(F.data == "topup:stars")
 async def topup_stars(callback: types.CallbackQuery):
     await callback.answer()
-    text = (
-        "⭐️ **Пополнение через Telegram Stars**\n\n"
-        "Курс конвертации: 1 Star = 1.50 RUB.\n"
-        "Оплата происходит нативно со счета Telegram."
-    )
-    await callback.message.edit_text(text, reply_markup=kb_back(target="topup_menu"), parse_mode="Markdown")
+    text = "⭐️ Пополнение через Telegram Stars\n\nКурс конвертации: 1 Star = 1.50 RUB.\nОплата происходит нативно со счета Telegram."
+    await callback.message.edit_text(text, reply_markup=kb_back(target="topup_menu"))
 
 
 @router.callback_query(F.data == "nav:withdraw_menu")
@@ -230,12 +196,8 @@ async def nav_withdraw_menu(callback: types.CallbackQuery, session: AsyncSession
     user = await session.get(User, callback.from_user.id)
     balance = float(user.balance) if user and user.balance else 0.0
 
-    text = (
-        f"📤 **Вывод заработанных средств**\n\n"
-        f"Доступно к выводу: **{balance:.2f} RUB**\n"
-        f"Минимальная сумма: **100.00 RUB**"
-    )
-    await callback.message.edit_text(text, reply_markup=kb_withdraw(), parse_mode="Markdown")
+    text = f"📤 Вывод заработанных средств\n\nДоступно к выводу: {balance:.2f} RUB\nМинимальная сумма: 100.00 RUB"
+    await callback.message.edit_text(text, reply_markup=kb_withdraw())
 
 
 @router.callback_query(F.data == "withdraw:sendpay")
@@ -245,22 +207,12 @@ async def withdraw_sendpay(callback: types.CallbackQuery, session: AsyncSession)
     balance = float(user.balance) if user and user.balance else 0.0
 
     if balance < 100.0:
-        text = (
-            "⚠️ **Недостаточно средств**\n\n"
-            f"Текущий баланс: **{balance:.2f} RUB**.\n"
-            "Минимальный вывод через SendPay: **100.00 RUB**."
-        )
+        text = f"⚠️ Недостаточно средств\n\nТекущий баланс: {balance:.2f} RUB.\nМинимальный вывод через SendPay: 100.00 RUB."
     else:
-        text = (
-            "💳 **Вывод через SendPay (СБП / Карты)**\n\n"
-            "Заявка сформирована и отправлена на автоматический шлюз выплат."
-        )
-    await callback.message.edit_text(text, reply_markup=kb_back(target="withdraw_menu"), parse_mode="Markdown")
+        text = "💳 Вывод через SendPay (СБП / Карты)\n\nЗаявка сформирована и отправлена на автоматический шлюз выплат."
+    await callback.message.edit_text(text, reply_markup=kb_back(target="withdraw_menu"))
 
 
-# -------------------------------------------------------------
-# Добавить бота
-# -------------------------------------------------------------
 @router.callback_query(F.data == "nav:add_bot")
 async def nav_add_bot(callback: types.CallbackQuery, session: AsyncSession):
     await callback.answer()
@@ -276,18 +228,10 @@ async def nav_add_bot(callback: types.CallbackQuery, session: AsyncSession):
     session.add(new_bot)
     await session.commit()
 
-    text = (
-        f"✅ **Бот успешно добавлен в систему!**\n\n"
-        f"• Имя: `@{new_bot.username}`\n"
-        f"• Токен интеграции: `{new_token}`\n\n"
-        "Перейдите в раздел «Продать ОП», чтобы настроить параметры."
-    )
-    await callback.message.edit_text(text, reply_markup=kb_back(target="sell_traffic"), parse_mode="Markdown")
+    text = f"✅ Бот успешно добавлен в систему!\n\n• Имя: @{new_bot.username}\n• Токен интеграции: {new_token}\n\nПерейдите в раздел «Продать ОП», чтобы настроить параметры."
+    await callback.message.edit_text(text, reply_markup=kb_back(target="sell_traffic"))
 
 
-# -------------------------------------------------------------
-# Продать ОП
-# -------------------------------------------------------------
 @router.callback_query(F.data == "nav:sell_traffic")
 async def nav_sell_traffic(callback: types.CallbackQuery, session: AsyncSession):
     await callback.answer()
@@ -296,15 +240,12 @@ async def nav_sell_traffic(callback: types.CallbackQuery, session: AsyncSession)
     )).scalars().all()
 
     if not bots:
-        text = (
-            "🤖 **Монетизация (Продажа ОП)**\n\n"
-            "У вас нет добавленных ботов. Нажмите кнопку ниже, чтобы подключить первого бота."
-        )
-        await callback.message.edit_text(text, reply_markup=kb_bot_list([]), parse_mode="Markdown")
+        text = "🤖 Монетизация (Продажа ОП)\n\nУ вас нет добавленных ботов. Нажмите кнопку ниже, чтобы подключить первого бота."
+        await callback.message.edit_text(text, reply_markup=kb_bot_list([]))
         return
 
-    text = "🤖 **Ваши подключенные боты:**\n\nВыберите бота для детальной настройки:"
-    await callback.message.edit_text(text, reply_markup=kb_bot_list(bots), parse_mode="Markdown")
+    text = "🤖 Ваши подключенные боты:\n\nВыберите бота для детальной настройки:"
+    await callback.message.edit_text(text, reply_markup=kb_bot_list(bots))
 
 
 @router.callback_query(F.data.startswith("bot_manage:"))
@@ -317,14 +258,8 @@ async def bot_manage(callback: types.CallbackQuery, session: AsyncSession):
         await callback.message.edit_text("Бот не найден.", reply_markup=kb_back(target="sell_traffic"))
         return
 
-    text = (
-        f"⚙️ **Управление ботом @{bot_obj.username}**\n\n"
-        f"• Мин. цена: **{float(bot_obj.min_price):.2f} RUB**\n"
-        f"• Лимит спонсоров: **{bot_obj.max_sponsors}**\n"
-        f"• Рейтинг качества: **{bot_obj.quality_score * 100:.0f}%**\n\n"
-        "Настройте параметры кнопками ниже:"
-    )
-    await callback.message.edit_text(text, reply_markup=kb_bot_settings(bot_id), parse_mode="Markdown")
+    text = f"⚙️ Управление ботом @{bot_obj.username}\n\n• Мин. цена: {float(bot_obj.min_price):.2f} RUB\n• Лимит спонсоров: {bot_obj.max_sponsors}\n• Рейтинг качества: {bot_obj.quality_score * 100:.0f}%\n\nНастройте параметры кнопками ниже:"
+    await callback.message.edit_text(text, reply_markup=kb_bot_settings(bot_id))
 
 
 @router.callback_query(F.data.startswith("bot_show_token:"))
@@ -332,8 +267,8 @@ async def bot_show_token(callback: types.CallbackQuery, session: AsyncSession):
     await callback.answer()
     bot_id = int(callback.data.split(":")[1])
     bot_obj = await session.get(Bot, bot_id)
-    text = f"🔑 **Токен интеграции для @{bot_obj.username}:**\n\n`{bot_obj.integration_token}`"
-    await callback.message.edit_text(text, reply_markup=kb_back(target="sell_traffic"), parse_mode="Markdown")
+    text = f"🔑 Токен интеграции для @{bot_obj.username}:\n\n{bot_obj.integration_token}"
+    await callback.message.edit_text(text, reply_markup=kb_back(target="sell_traffic"))
 
 
 @router.callback_query(F.data.startswith("bot_code_snippet:"))
@@ -342,12 +277,126 @@ async def bot_code_snippet(callback: types.CallbackQuery, session: AsyncSession)
     bot_id = int(callback.data.split(":")[1])
     bot_obj = await session.get(Bot, bot_id)
 
-    code = (
-        "```python\n"
-        "import requests\n\n"
-        f"url = '{BASE_URL}/api/v1/bot/sponsors'\n"
-        f"headers = {{'Authorization': 'Bearer {bot_obj.integration_token}'}}\n"
-        "params = {'user_id': message.from_user.id}\n"
-        "response = requests.get(url, headers=headers, params=params).json()\n"
-        "sponsors = response.get('sponsors', [])\n"
-        "
+    code = f"import requests\n\nurl = '{BASE_URL}/api/v1/bot/sponsors'\nheaders = {{'Authorization': 'Bearer {bot_obj.integration_token}'}}\nparams = {{'user_id': message.from_user.id}}\nresponse = requests.get(url, headers=headers, params=params).json()\nsponsors = response.get('sponsors', [])"
+    text = f"📋 Готовый код интеграции:\n\n{code}"
+    await callback.message.edit_text(text, reply_markup=kb_back(target="sell_traffic"))
+
+
+@router.callback_query(F.data.startswith("bot_edit_price:"))
+async def bot_edit_price(callback: types.CallbackQuery, session: AsyncSession):
+    await callback.answer()
+    bot_id = int(callback.data.split(":")[1])
+    bot_obj = await session.get(Bot, bot_id)
+    current = float(bot_obj.min_price)
+    next_price = 1.00 if current == 0.50 else (1.50 if current == 1.00 else (2.00 if current == 1.50 else 0.50))
+    bot_obj.min_price = Decimal(str(next_price))
+    await session.commit()
+    await bot_manage(callback, session)
+
+
+@router.callback_query(F.data.startswith("bot_edit_sponsors:"))
+async def bot_edit_sponsors(callback: types.CallbackQuery, session: AsyncSession):
+    await callback.answer()
+    bot_id = int(callback.data.split(":")[1])
+    bot_obj = await session.get(Bot, bot_id)
+    bot_obj.max_sponsors = 1 if bot_obj.max_sponsors >= 5 else (bot_obj.max_sponsors + 1)
+    await session.commit()
+    await bot_manage(callback, session)
+
+
+@router.callback_query(F.data.startswith("bot_delete:"))
+async def bot_delete(callback: types.CallbackQuery, session: AsyncSession):
+    await callback.answer()
+    bot_id = int(callback.data.split(":")[1])
+    bot_obj = await session.get(Bot, bot_id)
+    if bot_obj:
+        await session.delete(bot_obj)
+        await session.commit()
+    await callback.message.edit_text("🗑 Бот удалён из системы.", reply_markup=kb_back(target="sell_traffic"))
+
+
+@router.callback_query(F.data == "nav:buy_traffic")
+async def nav_buy_traffic(callback: types.CallbackQuery, session: AsyncSession):
+    await callback.answer()
+    orders = (await session.execute(
+        select(Order).where(Order.user_id == callback.from_user.id)
+    )).scalars().all()
+
+    text = "📢 Закупка трафика (Купить ОП)\n\nСоздавайте рекламные кампании для набора подписчиков в свои каналы через сеть ботов SmikHub."
+    await callback.message.edit_text(text, reply_markup=kb_buy_traffic(orders))
+
+
+@router.callback_query(F.data == "nav:create_order")
+async def nav_create_order(callback: types.CallbackQuery, session: AsyncSession, state: FSMContext):
+    await callback.answer()
+    user = await session.get(User, callback.from_user.id)
+    balance = float(user.balance) if user and user.balance else 0.0
+
+    if balance < 100.0:
+        text = f"⚠️ Недостаточно средств для запуска кампании\n\nТекущий баланс: {balance:.2f} RUB\nМинимальный бюджет для создания кампании: 100.00 RUB.\nПополните баланс в разделе «👤 Кабинет»."
+        await callback.message.edit_text(text, reply_markup=kb_back(target="buy_traffic"))
+        return
+
+    await state.set_state(CampaignStates.waiting_for_budget)
+    text = "✍️ Введите общий бюджет рекламной кампании в рублях (например, 500):"
+    await callback.message.edit_text(text, reply_markup=kb_back(target="buy_traffic"))
+
+
+@router.message(CampaignStates.waiting_for_budget)
+async def process_budget(message: types.Message, state: FSMContext):
+    try:
+        budget = float(message.text.strip())
+        if budget < 100:
+            raise ValueError()
+        await state.update_data(budget=budget)
+        await state.set_state(CampaignStates.waiting_for_price)
+        await message.answer("✍️ Введите ставку за 1 подписчика (CPC) в рублях (например, 1.20):")
+    except ValueError:
+        await message.answer("⚠️ Введите число от 100 руб.:")
+
+
+@router.message(CampaignStates.waiting_for_price)
+async def process_price(message: types.Message, state: FSMContext, session: AsyncSession):
+    try:
+        price = float(message.text.strip())
+        if price < 0.1:
+            raise ValueError()
+
+        data = await state.get_data()
+        budget = data.get("budget")
+        await state.clear()
+
+        user = await session.get(User, message.from_user.id)
+        if float(user.balance) < budget:
+            await message.answer("⚠️ Ошибка: на балансе недостаточно средств.", reply_markup=kb_main_menu())
+            return
+
+        user.balance -= Decimal(str(budget))
+        new_order = Order(
+            user_id=message.from_user.id,
+            channel_id=-1001234567890,
+            channel_title="Мой канал",
+            channel_link="https://t.me/telegram",
+            total_budget=Decimal(str(budget)),
+            remaining_budget=Decimal(str(budget)),
+            cpc_price=Decimal(str(price)),
+            status="active"
+        )
+        session.add(new_order)
+        await session.commit()
+
+        await message.answer(
+            f"✅ Рекламная кампания #{new_order.id} успешно запущена!\n\n• Бюджет: {budget:.2f} RUB\n• Ставка за подписку: {price:.2f} RUB\n• Статус: Активна",
+            reply_markup=kb_main_menu()
+        )
+    except ValueError:
+        await message.answer("⚠️ Введите корректную ставку (например, 1.20):")
+
+
+@router.callback_query(F.data == "nav:referrals")
+async def nav_referrals(callback: types.CallbackQuery):
+    await callback.answer()
+    bot_me = await callback.bot.get_me()
+    link = f"https://t.me/{bot_me.username}?start=ref_{callback.from_user.id}"
+    text = f"🤝 Партнёрская программа SmikHub\n\nПриглашайте вебмастеров и рекламодателей:\n• 5% от дохода ботов 1-го уровня\n• 2% от дохода ботов 2-го уровня\n\n🔗 Ваша партнёрская ссылка:\n{link}"
+    await callback.message.edit_text(text, reply_markup=kb_back(target="main_menu"))
