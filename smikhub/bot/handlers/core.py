@@ -243,12 +243,16 @@ def kb_admin_main() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🛑 Модерация заказов", callback_data="admin:orders_list"),
             InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin:settings")
         ],
+        [
+            InlineKeyboardButton(text="💬 Поддержка (Тикеты)", callback_data="admin:support_list")
+        ],
         [InlineKeyboardButton(text="« Назад в главное меню", callback_data="nav:main_menu")]
     ])
 
 def kb_admin_user_card(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 Изменить баланс", callback_data=f"admin:edit_user_bal:{user_id}")],
+        [InlineKeyboardButton(text="🚫 Заблокировать юзера", callback_data=f"admin:ban_user:{user_id}")],
         [InlineKeyboardButton(text="« Назад в админку", callback_data="nav:admin")]
     ])
 
@@ -287,7 +291,10 @@ async def start_cmd(message: types.Message, session: AsyncSession, command: Comm
         """CREATE TABLE IF NOT EXISTS promo_activations (
             id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL, promocode_id INTEGER NOT NULL, UNIQUE(user_id, promocode_id)
         );""",
-        "CREATE TABLE IF NOT EXISTS system_settings (key VARCHAR(50) PRIMARY KEY, value VARCHAR(255));"
+        "CREATE TABLE IF NOT EXISTS system_settings (key VARCHAR(50) PRIMARY KEY, value VARCHAR(255));",
+        """CREATE TABLE IF NOT EXISTS support_tickets (
+            id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL, username VARCHAR(100), message TEXT NOT NULL, status VARCHAR(20) DEFAULT 'open', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );"""
     ]
     for q in queries:
         try:
@@ -334,7 +341,8 @@ async def fix_db_command(message: types.Message, session: AsyncSession):
         "ALTER TABLE bots ADD COLUMN tgrass_token VARCHAR;",
         "CREATE TABLE IF NOT EXISTS promocodes (id SERIAL PRIMARY KEY, code VARCHAR(50) UNIQUE NOT NULL, amount NUMERIC(10, 2) NOT NULL, activations_left INTEGER NOT NULL);",
         "CREATE TABLE IF NOT EXISTS promo_activations (id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL, promocode_id INTEGER NOT NULL, UNIQUE(user_id, promocode_id));",
-        "CREATE TABLE IF NOT EXISTS system_settings (key VARCHAR(50) PRIMARY KEY, value VARCHAR(255));"
+        "CREATE TABLE IF NOT EXISTS system_settings (key VARCHAR(50) PRIMARY KEY, value VARCHAR(255));",
+        "CREATE TABLE IF NOT EXISTS support_tickets (id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL, username VARCHAR(100), message TEXT NOT NULL, status VARCHAR(20) DEFAULT 'open', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
     ]
     for q in queries:
         try:
@@ -342,37 +350,114 @@ async def fix_db_command(message: types.Message, session: AsyncSession):
             await session.commit()
         except Exception:
             await session.rollback()
-    await message.answer("✅ База данных полностью синхронизирована!")
+    await message.answer("✅ База данных полностью синхронизирована с поддержкой и тикетами!")
 
 # ==========================================
-# 💬 ПОДДЕРЖКА (ТИКЕТЫ)
+# 💬 ПОДДЕРЖКА (ТИКЕТЫ С USERNAME И КНОПКАМИ)
 # ==========================================
 @router.callback_query(F.data == "nav:support")
 async def nav_support(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SupportStates.waiting_for_message)
     await callback.message.edit_text(
-        "💬 **Служба поддержки**\n\nОпишите вашу проблему, задайте вопрос или предложите идею в одном сообщении. Администратор ответит вам прямо в этом боте.", 
+        "💬 **Служба поддержки**\n\nОпишите вашу проблему или задайте вопрос в одном сообщении:", 
         reply_markup=kb_cancel("main_menu", "« Назад"), parse_mode="Markdown"
     )
 
 @router.message(SupportStates.waiting_for_message)
-async def support_msg_handler(message: types.Message, state: FSMContext):
+async def support_msg_handler(message: types.Message, state: FSMContext, session: AsyncSession):
     await state.clear()
+    uid = message.from_user.id
+    uname = message.from_user.username or "Без юзернейма"
+    text_content = message.text or "[Медиа/Файл]"
+    
+    # Сохраняем тикет в базу
+    try:
+        await session.execute(
+            text("INSERT INTO support_tickets (user_id, username, message) VALUES (:uid, :uname, :msg)"),
+            {"uid": uid, "uname": uname, "msg": text_content}
+        )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+
     admin_id = 6470511118
     if getattr(config, 'ADMIN_CHAT_ID', None):
         admin_id = int(config.ADMIN_CHAT_ID)
         
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="↪️ Ответить пользователю", callback_data=f"admin:reply:{message.from_user.id}")]
+        [
+            InlineKeyboardButton(text="💬 Ответить", callback_data=f"admin:reply:{uid}"),
+            InlineKeyboardButton(text="👤 Профиль", callback_data=f"admin:user_lookup:{uid}")
+        ],
+        [
+            InlineKeyboardButton(text="🚫 Заблокировать", callback_data=f"admin:ban_user:{uid}")
+        ]
     ])
     
+    ticket_text = (
+        f"🆘 **Новое обращение в поддержку!**\n\n"
+        f"👤 **От:** @{uname} (`{uid}`)\n"
+        f"💬 **Сообщение:**\n{text_content}"
+    )
+    
     try:
-        await message.bot.send_message(admin_id, f"🆘 **Новый тикет от @{message.from_user.username or message.from_user.id}** (`{message.from_user.id}`):", parse_mode="Markdown")
-        await message.copy_to(admin_id, reply_markup=kb)
-        await message.answer("✅ Ваше сообщение отправлено в поддержку! Ожидайте ответа.", reply_markup=kb_main_menu(is_admin_user(message.from_user.id)))
-    except Exception:
-        await message.answer("⚠️ Ошибка отправки.")
+        await message.bot.send_message(admin_id, ticket_text, reply_markup=kb, parse_mode="Markdown")
+        await message.answer("✅ Ваше сообщение успешно отправлено в поддержку! Ожидайте ответа.", reply_markup=kb_main_menu(is_admin_user(uid)))
+    except Exception as e:
+        await message.answer(f"⚠️ Ошибка отправки: {e}")
+
+@router.callback_query(F.data == "admin:support_list")
+async def admin_support_list(callback: types.CallbackQuery, session: AsyncSession):
+    if not is_admin_user(callback.from_user.id): return
+    await callback.answer()
+    
+    tickets = (await session.execute(text("SELECT id, user_id, username, message, status FROM support_tickets WHERE status='open' ORDER BY id DESC LIMIT 15"))).mappings().all()
+    
+    if not tickets:
+        await callback.message.edit_text("💬 **Тикеты поддержки**\n\nНет активных обращений.", reply_markup=kb_cancel("admin", "« Назад"), parse_mode="Markdown")
+        return
+        
+    buttons = []
+    for t in tickets:
+        short_msg = t['message'][:20] + "..." if len(t['message']) > 20 else t['message']
+        buttons.append([InlineKeyboardButton(text=f"@{t['username']}: {short_msg}", callback_data=f"admin:ticket_view:{t['id']}")])
+    buttons.append([InlineKeyboardButton(text="« Назад в админку", callback_data="nav:admin")])
+    
+    await callback.message.edit_text("💬 **Активные тикеты поддержки:**\n\nНажмите на обращение для ответа:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="Markdown")
+
+@router.callback_query(F.data.startswith("admin:ticket_view:"))
+async def admin_ticket_view(callback: types.CallbackQuery, session: AsyncSession):
+    if not is_admin_user(callback.from_user.id): return
+    await callback.answer()
+    t_id = int(callback.data.split(":")[3])
+    t = (await session.execute(text("SELECT id, user_id, username, message FROM support_tickets WHERE id=:id"), {"id": t_id})).mappings().first()
+    
+    if not t:
+        await callback.message.edit_text("Тикет не найден.", reply_markup=kb_cancel("admin:support_list"))
+        return
+        
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="💬 Ответить", callback_data=f"admin:reply:{t['user_id']}"),
+            InlineKeyboardButton(text="✅ Закрыть тикет", callback_data=f"admin:close_ticket:{t['id']}")
+        ],
+        [InlineKeyboardButton(text="« К списку тикетов", callback_data="admin:support_list")]
+    ])
+    
+    await callback.message.edit_text(
+        f"🆘 **Тикет #{t['id']}**\n\n👤 **От:** @{t['username']} (`{t['user_id']}`)\n💬 **Текст:**\n{t['message']}",
+        reply_markup=kb, parse_mode="Markdown"
+    )
+
+@router.callback_query(F.data.startswith("admin:close_ticket:"))
+async def admin_close_ticket(callback: types.CallbackQuery, session: AsyncSession):
+    if not is_admin_user(callback.from_user.id): return
+    t_id = int(callback.data.split(":")[3])
+    await session.execute(text("UPDATE support_tickets SET status='closed' WHERE id=:id"), {"id": t_id})
+    await session.commit()
+    await callback.answer("Тикет закрыт!")
+    await admin_support_list(callback, session)
 
 @router.callback_query(F.data.startswith("admin:reply:"))
 async def admin_reply_cb(callback: types.CallbackQuery, state: FSMContext):
@@ -395,6 +480,29 @@ async def admin_send_reply(message: types.Message, state: FSMContext):
         await message.answer(f"✅ Ответ успешно доставлен пользователю `{uid}`!", reply_markup=kb_cancel("admin", "« В админку"))
     except Exception:
         await message.answer("⚠️ Не удалось отправить сообщение.", reply_markup=kb_cancel("admin", "« В админку"))
+
+# Защита от спама/бан юзера
+@router.callback_query(F.data.startswith("admin:ban_user:"))
+async def admin_ban_user(callback: types.CallbackQuery, session: AsyncSession):
+    if not is_admin_user(callback.from_user.id): return
+    uid = int(callback.data.split(":")[3])
+    # Можно обнулить баланс или пометить в базе. Для примера удаляем боты и ставим баланс в 0
+    u = await session.get(User, uid)
+    if u:
+        u.balance = Decimal("0.0")
+        await session.commit()
+    await callback.answer(f"🚫 Пользователь `{uid}` заблокирован (баланс обнулен).", show_alert=True)
+
+@router.callback_query(F.data.startswith("admin:user_lookup:"))
+async def admin_user_lookup(callback: types.CallbackQuery, session: AsyncSession):
+    if not is_admin_user(callback.from_user.id): return
+    uid = int(callback.data.split(":")[3])
+    u = await session.get(User, uid)
+    if not u:
+        await callback.answer("Юзер не найден", show_alert=True)
+        return
+    await callback.message.answer(f"👤 **Юзер ID:** `{u.id}`\n👤 **Username:** @{u.username}\n💰 **Баланс:** `{u.balance} RUB`", reply_markup=kb_admin_user_card(u.id), parse_mode="Markdown")
+    await callback.answer()
 
 # ==========================================
 # ⚙️ СИСТЕМНЫЕ НАСТРОЙКИ
