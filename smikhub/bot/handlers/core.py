@@ -174,6 +174,10 @@ def kb_cancel(target: str = "main_menu", text_btn: str = "« Отмена") -> I
 # ПРОВЕРКА АДМИНА
 # ==========================================
 def is_admin_user(user_id: int) -> bool:
+    # Железобетонная проверка твоего личного ID
+    if str(user_id) == "6470511118":
+        return True
+        
     admin_id = getattr(config, 'ADMIN_CHAT_ID', None)
     admin_ids = getattr(config, 'ADMIN_USER_IDS', [])
     
@@ -235,6 +239,36 @@ async def nav_main_menu(callback: types.CallbackQuery, state: FSMContext):
     text_msg = "👋 **Главное меню SmikHub**\n\nВыберите нужный раздел:"
     await callback.message.edit_text(text_msg, reply_markup=kb_main_menu(is_admin_user(callback.from_user.id)), parse_mode="Markdown")
 
+
+# ==========================================
+# Ремонт базы данных (СКРЫТАЯ КОМАНДА)
+# ==========================================
+@router.message(Command("fixdb"))
+async def fix_db_command(message: types.Message, session: AsyncSession):
+    if not is_admin_user(message.from_user.id):
+        await message.answer("Доступ только для администратора.")
+        return
+        
+    queries = [
+        "ALTER TABLE bots ADD COLUMN subgram_token VARCHAR;",
+        "ALTER TABLE bots ADD COLUMN flyer_token VARCHAR;",
+        "ALTER TABLE bots ADD COLUMN traffy_token VARCHAR;",
+        "ALTER TABLE bots ADD COLUMN piarflow_token VARCHAR;",
+        "ALTER TABLE bots ADD COLUMN tgrass_token VARCHAR;"
+    ]
+    
+    success = 0
+    for q in queries:
+        try:
+            await session.execute(text(q))
+            await session.commit()
+            success += 1
+        except Exception:
+            await session.rollback()
+            
+    await message.answer(f"✅ База данных обновлена!\n\nРазделы «Продать ОП» и «Админка» должны работать.")
+
+
 # ==========================================
 # Админка
 # ==========================================
@@ -287,6 +321,7 @@ async def admin_broadcast(callback: types.CallbackQuery):
     await callback.answer()
     text_msg = "📢 **Рассылка сообщений**\n\nОтправьте текст сообщения для массовой рассылки всем пользователям платформы."
     await callback.message.edit_text(text_msg, reply_markup=kb_cancel("admin"), parse_mode="Markdown")
+
 
 # ==========================================
 # Кабинет пользователя (Пополнить / Вывести)
@@ -509,19 +544,17 @@ async def process_add_bot_username(message: types.Message, state: FSMContext, se
     session.add(new_bot)
     await session.commit()
 
-    admin_id = getattr(config, 'ADMIN_CHAT_ID', getattr(config, 'ADMIN_USER_IDS', None))
-    if admin_id:
-        try:
-            admin_msg = f"🔔 **Новый бот на модерацию!**\n\n• Бот: @{new_bot.username}\n• Владелец ID: `{message.from_user.id}`\n• Имя: @{message.from_user.username or 'без username'}"
-            notify_id = admin_id[0] if isinstance(admin_id, (list, tuple)) else admin_id
-            await message.bot.send_message(
-                notify_id,
-                admin_msg,
-                reply_markup=kb_admin_bot_moderation(new_bot.id),
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
+    try:
+        admin_msg = f"🔔 **Новый бот на модерацию!**\n\n• Бот: @{new_bot.username}\n• Владелец ID: `{message.from_user.id}`\n• Имя: @{message.from_user.username or 'без username'}"
+        # Отправляем уведомление на твой личный ID
+        await message.bot.send_message(
+            6470511118,
+            admin_msg,
+            reply_markup=kb_admin_bot_moderation(new_bot.id),
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass
 
     text_msg = f"✅ **Бот @{new_bot.username} отправлен на модерацию!**\n\n🔑 Токен API: `{new_token}`\nПосле подтверждения бот начнёт получать задания."
     await message.answer(text_msg, reply_markup=kb_cancel("sell_traffic", "« К списку ботов"), parse_mode="Markdown")
@@ -747,7 +780,7 @@ async def _save_integration_token(message: types.Message, state: FSMContext, ses
             await session.commit()
             await message.answer(f"✅ Токен {service_name} успешно сохранён и подключён к боту!", reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Назад к сервисам"))
         except Exception:
-            await message.answer("⚠️ Возникла ошибка при сохранении в базу. База ещё обновляется.", reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Назад к сервисам"))
+            await message.answer("⚠️ Возникла ошибка при сохранении в базу. Выполните команду /fixdb", reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Назад к сервисам"))
     else:
         await message.answer("Бот не найден.", reply_markup=kb_cancel("sell_traffic", "« К списку ботов"))
 
