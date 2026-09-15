@@ -23,25 +23,33 @@ check_bot = Bot(token=CHECK_BOT_TOKEN)
 dp_main = Dispatcher()
 dp_check = Dispatcher()
 
+
+async def run_bots():
+    await asyncio.gather(
+        dp_main.start_polling(main_bot, session_maker=async_session_factory),
+        dp_check.start_polling(check_bot, session_maker=async_session_factory),
+        return_exceptions=True
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await run_auto_migrations()
     setup_main_bot_handlers(dp_main)
     setup_checkbot_handlers(dp_check)
 
-    workers_task = asyncio.create_task(start_background_workers(check_bot, async_session_factory))
-    bots_task = asyncio.create_task(
-        asyncio.gather(
-            dp_main.start_polling(main_bot, session_maker=async_session_factory),
-            dp_check.start_polling(check_bot, session_maker=async_session_factory),
-            return_exceptions=True
-        )
+    workers_task = asyncio.create_task(
+        start_background_workers(check_bot, async_session_factory)
     )
+    bots_task = asyncio.create_task(run_bots())
+
     yield
+
     workers_task.cancel()
     bots_task.cancel()
     await main_bot.session.close()
     await check_bot.session.close()
+
 
 app = FastAPI(title="SmikHub", lifespan=lifespan)
 app.middleware("http")(global_exception_middleware)
