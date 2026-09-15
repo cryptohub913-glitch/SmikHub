@@ -1,20 +1,39 @@
 import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Header
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select
 
 from smikhub.db.models import Bot, Order
-from smikhub.api.deps import get_db
+from smikhub.config import DATABASE_URL
+import smikhub.config as config
 
-# Обрати внимание, префикс может быть просто "/", если он уже задан в main.py
+# --- Настройка собственной независимой сессии БД ---
+engine = create_async_engine(DATABASE_URL, echo=False)
+async_session_maker = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+async def get_db():
+    async with async_session_maker() as session:
+        yield session
+# ---------------------------------------------------
+
 router = APIRouter(prefix="/api/v1/bot", tags=["Sponsors"])
+
+def is_admin_user(user_id: int) -> bool:
+    if str(user_id) == "6470511118":
+        return True
+    admin_id = getattr(config, 'ADMIN_CHAT_ID', None)
+    admin_ids = getattr(config, 'ADMIN_USER_IDS', [])
+    if admin_id and str(user_id) == str(admin_id):
+        return True
+    if admin_ids and str(user_id) in str(admin_ids):
+        return True
+    return False
 
 async def get_current_bot(
     authorization: str = Header(None), 
     db: AsyncSession = Depends(get_db)
 ):
-    
-    
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid token")
     
@@ -24,7 +43,6 @@ async def get_current_bot(
     if not bot or not bot.is_active:
         raise HTTPException(status_code=403, detail="Bot not found or banned by admin")
     return bot
-
 
 @router.get("/sponsors")
 async def get_bot_sponsors(
@@ -37,10 +55,9 @@ async def get_bot_sponsors(
     # =======================================================
     # ПРИОРИТЕТ 1: Внутренние заказы SmikHub (твоя база)
     # =======================================================
-    # Ищем активные заказы, где денег хватает хотя бы на 1 подписку
     stmt = select(Order).where(
         Order.status == "active",
-        Order.remaining_budget >= Order.price_per_sub
+        Order.remaining_budget >= Order.cpc_price
     ).limit(bot.max_sponsors)
     
     internal_orders = (await db.execute(stmt)).scalars().all()
@@ -48,24 +65,22 @@ async def get_bot_sponsors(
     for order in internal_orders:
         sponsors.append({
             "id": f"smikhub_{order.id}",
-            "name": order.title or order.channel_username or "Спонсор",
-            "url": order.link,
-            "reward": float(bot.min_price),  # Вознаграждение по тарифу бота
+            "name": order.channel_title or order.channel_link or "Спонсор",
+            "url": order.channel_link,
+            "reward": float(bot.min_price),
             "source": "smikhub"
         })
         
-    # Если мы нашли свои заказы, сразу отдаем их.
     if sponsors:
         return {"sponsors": sponsors}
 
     # =======================================================
     # ПРИОРИТЕТ 2: Сторонние интеграции (Waterfall)
     # =======================================================
-    # Используем aiohttp вместо httpx
     timeout = aiohttp.ClientTimeout(total=3.0)
     async with aiohttp.ClientSession(timeout=timeout) as client:
         
-        # 1. Проверяем Subgram
+        # 1. Subgram
         if bot.subgram_token:
             try:
                 async with client.get(
@@ -86,7 +101,7 @@ async def get_bot_sponsors(
                         if sponsors: return {"sponsors": sponsors}
             except Exception: pass
 
-        # 2. Проверяем Flyer
+        # 2. Flyer
         if bot.flyer_token:
             try:
                 async with client.get(
@@ -107,7 +122,7 @@ async def get_bot_sponsors(
                         if sponsors: return {"sponsors": sponsors}
             except Exception: pass
 
-        # 3. Проверяем Traffy (Trafsly)
+        # 3. Traffy (Trafsly)
         if bot.traffy_token:
             try:
                 async with client.get(
@@ -128,7 +143,7 @@ async def get_bot_sponsors(
                         if sponsors: return {"sponsors": sponsors}
             except Exception: pass
 
-        # 4. Проверяем PiarFlow
+        # 4. PiarFlow
         if bot.piarflow_token:
             try:
                 async with client.get(
@@ -149,7 +164,7 @@ async def get_bot_sponsors(
                         if sponsors: return {"sponsors": sponsors}
             except Exception: pass
 
-        # 5. Проверяем TgGrass
+        # 5. TgGrass
         if bot.tgrass_token:
             try:
                 async with client.get(
@@ -170,5 +185,4 @@ async def get_bot_sponsors(
                         if sponsors: return {"sponsors": sponsors}
             except Exception: pass
 
-    # Если ни внутренних заказов, ни рабочих интеграций нет — отдаём пустой список
     return {"sponsors": []}
