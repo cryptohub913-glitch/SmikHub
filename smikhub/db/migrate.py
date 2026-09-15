@@ -1,41 +1,30 @@
 import asyncio
+from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import text
-from smikhub.db.engine import engine, Base
-import smikhub.db.models
+from smikhub.config import DATABASE_URL
 
-SCHEMA_UPDATES = [
-    ("users", "referrer_id", "BIGINT NULL"),
-    ("bots", "quality_score", "FLOAT DEFAULT 0.80"),
-    ("bots", "webhook_url", "VARCHAR(512) NULL"),
-    ("orders", "category", "VARCHAR(32) DEFAULT 'general'"),
-    ("orders", "target_languages", "VARCHAR(64) DEFAULT 'all'"),
-    ("orders", "max_per_hour", "INTEGER NULL"),
-    ("orders", "is_auto_bid_enabled", "BOOLEAN DEFAULT FALSE"),
-    ("orders", "max_auto_bid", "NUMERIC(10, 4) NULL"),
-    ("subscription_records", "sub_id", "VARCHAR(64) NULL"),
-    ("subscription_records", "utm_campaign", "VARCHAR(64) NULL"),
-]
+async def fix_database():
+    print(f"Подключение к базе данных...")
+    engine = create_async_engine(DATABASE_URL, echo=True)
+    
+    queries = [
+        "ALTER TABLE bots ADD COLUMN IF NOT EXISTS subgram_token VARCHAR;",
+        "ALTER TABLE bots ADD COLUMN IF NOT EXISTS flyer_token VARCHAR;",
+        "ALTER TABLE bots ADD COLUMN IF NOT EXISTS traffy_token VARCHAR;",
+        "ALTER TABLE bots ADD COLUMN IF NOT EXISTS piarflow_token VARCHAR;",
+        "ALTER TABLE bots ADD COLUMN IF NOT EXISTS tgrass_token VARCHAR;"
+    ]
 
-
-async def run_auto_migrations():
-    print("📦 [DB Migration] Создание таблиц...", flush=True)
-    # 1. Гарантированно фиксируем создание таблиц в отдельной чистой транзакции
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    print("✅ [DB Migration] Таблицы успешно зафиксированы в БД.", flush=True)
-
-    # 2. Накатываем обновления колонок изолированно через IF NOT EXISTS
-    for table, col, ctype in SCHEMA_UPDATES:
-        try:
-            async with engine.begin() as conn:
-                if engine.dialect.name == "postgresql":
-                    await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {ctype};"))
-                else:
-                    await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ctype};"))
-        except Exception:
-            pass
-    print("✅ [DB Migration] Схема базы данных актуальна.", flush=True)
-
+        for q in queries:
+            try:
+                await conn.execute(text(q))
+                print(f"✅ Успешно выполнено: {q}")
+            except Exception as e:
+                print(f"⚠️ Пропущено / уже существует: {e}")
+                
+    await engine.dispose()
+    print("🎉 Миграция базы данных успешно завершена!")
 
 if __name__ == "__main__":
-    asyncio.run(run_auto_migrations())
+    asyncio.run(fix_database())

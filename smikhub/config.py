@@ -16,3 +16,4 @@ SEND_PAY_API_KEY = os.getenv("SEND_PAY_API_KEY", "")
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 BASE_URL = os.getenv("BASE_URL", "https://smikhub-production.up.railway.app")
+ADMIN_CHAT_ID = "6470511118"  # Например: "6470511118"
