@@ -26,7 +26,6 @@ dp_main = Dispatcher()
 dp_check = Dispatcher()
 
 
-# Автоматическая выдача и закрытие сессии БД для каждого события Telegram
 class DbSessionMiddleware(BaseMiddleware):
     def __init__(self, session_pool):
         super().__init__()
@@ -44,9 +43,10 @@ class DbSessionMiddleware(BaseMiddleware):
 
 
 async def run_bots():
+    # drop_pending_updates=True сбрасывает зависшие клики при рестарте для мгновенного отклика
     await asyncio.gather(
-        dp_main.start_polling(main_bot),
-        dp_check.start_polling(check_bot),
+        dp_main.start_polling(main_bot, drop_pending_updates=True),
+        dp_check.start_polling(check_bot, drop_pending_updates=True),
         return_exceptions=True
     )
 
@@ -55,7 +55,7 @@ async def run_bots():
 async def lifespan(app: FastAPI):
     await run_auto_migrations()
 
-    # Подключаем сессию БД ко всем входящим апдейтам ботов
+    # Передача сессии БД во все хендлеры обоих ботов
     db_middleware = DbSessionMiddleware(async_session_factory)
     dp_main.update.outer_middleware(db_middleware)
     dp_check.update.outer_middleware(db_middleware)
