@@ -24,7 +24,8 @@ class Bot(Base):
     category = Column(String(32), default="general")
     webhook_url = Column(String(512), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    # Токены сторонних интеграций (теперь они внутри класса Bot)
+    
+    # Токены сторонних интеграций
     subgram_token = Column(String, nullable=True)
     flyer_token = Column(String, nullable=True)
     traffy_token = Column(String, nullable=True)
@@ -136,3 +137,18 @@ class BotRequestLog(Base):
     http_status = Column(Integer, default=200)
     tasks_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+# --- ДОБАВЛЕННЫЕ НОВЫЕ ТАБЛИЦЫ ДЛЯ НАСТРОЕК И ТИКЕТОВ ---
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+    key = Column(String(50), primary_key=True)
+    value = Column(String(255), nullable=True)
+
+class SupportTicket(Base):
+    __tablename__ = "support_tickets"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, nullable=False, index=True)
+    username = Column(String(100), nullable=True)
+    message = Column(Text, nullable=False)
+    status = Column(String(20), default='open', index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

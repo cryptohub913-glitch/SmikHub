@@ -350,7 +350,7 @@ async def fix_db_command(message: types.Message, session: AsyncSession):
             await session.commit()
         except Exception:
             await session.rollback()
-    await message.answer("✅ База данных полностью синхронизирована с поддержкой и тикетами!")
+    await message.answer("✅ База данных полностью синхронизирована!")
 
 # ==========================================
 # 💬 ПОДДЕРЖКА (ТИКЕТЫ С USERNAME И КНОПКАМИ)
@@ -371,7 +371,6 @@ async def support_msg_handler(message: types.Message, state: FSMContext, session
     uname = message.from_user.username or "Без юзернейма"
     text_content = message.text or "[Медиа/Файл]"
     
-    # Сохраняем тикет в базу
     try:
         await session.execute(
             text("INSERT INTO support_tickets (user_id, username, message) VALUES (:uid, :uname, :msg)"),
@@ -481,12 +480,10 @@ async def admin_send_reply(message: types.Message, state: FSMContext):
     except Exception:
         await message.answer("⚠️ Не удалось отправить сообщение.", reply_markup=kb_cancel("admin", "« В админку"))
 
-# Защита от спама/бан юзера
 @router.callback_query(F.data.startswith("admin:ban_user:"))
 async def admin_ban_user(callback: types.CallbackQuery, session: AsyncSession):
     if not is_admin_user(callback.from_user.id): return
     uid = int(callback.data.split(":")[3])
-    # Можно обнулить баланс или пометить в базе. Для примера удаляем боты и ставим баланс в 0
     u = await session.get(User, uid)
     if u:
         u.balance = Decimal("0.0")
