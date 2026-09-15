@@ -24,6 +24,12 @@ class Bot(Base):
     category = Column(String(32), default="general")
     webhook_url = Column(String(512), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Токены сторонних интеграций (теперь они внутри класса Bot)
+    subgram_token = Column(String, nullable=True)
+    flyer_token = Column(String, nullable=True)
+    traffy_token = Column(String, nullable=True)
+    piarflow_token = Column(String, nullable=True)
+    tgrass_token = Column(String, nullable=True)
 
 class Order(Base):
     __tablename__ = "orders"
