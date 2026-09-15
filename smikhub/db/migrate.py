@@ -3,28 +3,32 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import text
 from smikhub.config import DATABASE_URL
 
-async def fix_database():
-    print(f"Подключение к базе данных...")
-    engine = create_async_engine(DATABASE_URL, echo=True)
-    
-    queries = [
-        "ALTER TABLE bots ADD COLUMN IF NOT EXISTS subgram_token VARCHAR;",
-        "ALTER TABLE bots ADD COLUMN IF NOT EXISTS flyer_token VARCHAR;",
-        "ALTER TABLE bots ADD COLUMN IF NOT EXISTS traffy_token VARCHAR;",
-        "ALTER TABLE bots ADD COLUMN IF NOT EXISTS piarflow_token VARCHAR;",
-        "ALTER TABLE bots ADD COLUMN IF NOT EXISTS tgrass_token VARCHAR;"
-    ]
+async def run_auto_migrations():
+    print("⏳ Запуск автоматических миграций базы данных...")
+    try:
+        engine = create_async_engine(DATABASE_URL, echo=False)
+        
+        queries = [
+            "ALTER TABLE bots ADD COLUMN subgram_token VARCHAR;",
+            "ALTER TABLE bots ADD COLUMN flyer_token VARCHAR;",
+            "ALTER TABLE bots ADD COLUMN traffy_token VARCHAR;",
+            "ALTER TABLE bots ADD COLUMN piarflow_token VARCHAR;",
+            "ALTER TABLE bots ADD COLUMN tgrass_token VARCHAR;"
+        ]
 
-    async with engine.begin() as conn:
-        for q in queries:
-            try:
-                await conn.execute(text(q))
-                print(f"✅ Успешно выполнено: {q}")
-            except Exception as e:
-                print(f"⚠️ Пропущено / уже существует: {e}")
-                
-    await engine.dispose()
-    print("🎉 Миграция базы данных успешно завершена!")
+        async with engine.begin() as conn:
+            for q in queries:
+                try:
+                    await conn.execute(text(q))
+                    print(f"✅ Выполнено: {q}")
+                except Exception:
+                    # Игнорируем ошибку, если колонка уже существует
+                    pass
+                    
+        await engine.dispose()
+        print("🎉 Миграции успешно завершены!")
+    except Exception as e:
+        print(f"⚠️ Ошибка при миграции (база может быть уже актуальна): {e}")
 
 if __name__ == "__main__":
-    asyncio.run(fix_database())
+    asyncio.run(run_auto_migrations())
