@@ -1,303 +1,132 @@
-import enum
-from datetime import datetime, timezone
-
-from sqlalchemy import BigInteger, ForeignKey, Numeric, String, UniqueConstraint
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-class CategoryMode(str, enum.Enum):
-    ALL_EXCEPT_OWN = "all_except_own"
-    ONLY_OWN = "only_own"
-
-
-class Provider(str, enum.Enum):
-    SUBGRAM = "subgram"
-    FLYER = "flyer"
-    TGRASS = "tgrass"
-    PIARFLOW = "piarflow"
-
-
-class TrafficType(str, enum.Enum):
-    SUBSCRIPTIONS = "subscriptions"
-    VIEWS = "views"
-
-
-class DestinationType(str, enum.Enum):
-    CHANNEL_CHAT = "channel_chat"
-    BOT = "bot"
-    RESOURCE = "resource"
-
-
-class OrderStatus(str, enum.Enum):
-    PAUSED = "paused"
-    RUNNING = "running"
-
-
-class Gender(str, enum.Enum):
-    ANY = "any"
-    MALE = "male"
-    FEMALE = "female"
-
-
-class AgeGroup(str, enum.Enum):
-    ANY = "any"
-    UNDER_13 = "under_13"
-    AGE_14_17 = "age_14_17"
-    ADULT = "adult"
-
-
-class PremiumFilter(str, enum.Enum):
-    NOT_IMPORTANT = "not_important"
-    ONLY_PREMIUM = "only_premium"
-
-
-class DepositStatus(str, enum.Enum):
-    PENDING = "pending"
-    PAID = "paid"
-    EXPIRED = "expired"
-
-
-class WithdrawalStatus(str, enum.Enum):
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-
+from datetime import datetime
+from sqlalchemy import Column, Integer, BigInteger, String, Numeric, DateTime, ForeignKey, Boolean, Float, Text, Index
+from sqlalchemy.orm import relationship
+from smikhub.db.engine import Base
 
 class User(Base):
     __tablename__ = "users"
+    id = Column(BigInteger, primary_key=True)
+    username = Column(String(64), nullable=True)
+    balance = Column(Numeric(10, 4), default=0.0)
+    referrer_id = Column(BigInteger, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)  # Telegram user id
-    balance: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
-    is_banned: Mapped[bool] = mapped_column(default=False)
-    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
-
-    bots: Mapped[list["ManagedBot"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
-    orders: Mapped[list["Order"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
-
-
-class ManagedBot(Base):
-    __tablename__ = "managed_bots"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    telegram_bot_id: Mapped[int] = mapped_column(BigInteger, unique=True)
-    username: Mapped[str] = mapped_column(String(64))
-    encrypted_token: Mapped[str] = mapped_column(String(255))
-
-    is_active: Mapped[bool] = mapped_column(default=True)
-    category_mode: Mapped[CategoryMode] = mapped_column(default=CategoryMode.ALL_EXCEPT_OWN)
-    min_price: Mapped[float] = mapped_column(Numeric(3, 1), default=0.0)
-    max_sponsors: Mapped[int] = mapped_column(default=3)
-
-    integration_token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    integration_token_encrypted: Mapped[str] = mapped_column(String(255))
-
-    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
-
-    owner: Mapped["User"] = relationship(back_populates="bots")
-    disabled_categories: Mapped[list["BotDisabledCategory"]] = relationship(
-        back_populates="bot", cascade="all, delete-orphan"
-    )
-    integrations: Mapped[list["SponsorIntegration"]] = relationship(
-        back_populates="bot", cascade="all, delete-orphan"
-    )
-    priorities: Mapped[list["ProviderPriority"]] = relationship(
-        back_populates="bot", cascade="all, delete-orphan", order_by="ProviderPriority.position"
-    )
-
-
-class Category(Base):
-    __tablename__ = "categories"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    code: Mapped[str] = mapped_column(String(32), unique=True)
-    title: Mapped[str] = mapped_column(String(64))
-
-
-class BotDisabledCategory(Base):
-    __tablename__ = "bot_disabled_categories"
-    __table_args__ = (UniqueConstraint("bot_id", "category_id"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    bot_id: Mapped[int] = mapped_column(ForeignKey("managed_bots.id", ondelete="CASCADE"))
-    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id", ondelete="CASCADE"))
-
-    bot: Mapped["ManagedBot"] = relationship(back_populates="disabled_categories")
-    category: Mapped["Category"] = relationship()
-
-
-class SponsorIntegration(Base):
-    __tablename__ = "sponsor_integrations"
-    __table_args__ = (UniqueConstraint("bot_id", "provider"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    bot_id: Mapped[int] = mapped_column(ForeignKey("managed_bots.id", ondelete="CASCADE"))
-    provider: Mapped[Provider] = mapped_column()
-    encrypted_token: Mapped[str] = mapped_column(String(255))
-    connected_at: Mapped[datetime] = mapped_column(default=_utcnow)
-
-    bot: Mapped["ManagedBot"] = relationship(back_populates="integrations")
-
-
-class ProviderPriority(Base):
-    __tablename__ = "provider_priorities"
-    __table_args__ = (UniqueConstraint("bot_id", "provider"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    bot_id: Mapped[int] = mapped_column(ForeignKey("managed_bots.id", ondelete="CASCADE"))
-    provider: Mapped[str] = mapped_column(String(32))
-    position: Mapped[int] = mapped_column()
-
-    bot: Mapped["ManagedBot"] = relationship(back_populates="priorities")
-
+class Bot(Base):
+    __tablename__ = "bots"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    username = Column(String(64), nullable=False)
+    integration_token = Column(String(64), unique=True, nullable=False, index=True)
+    is_active = Column(Boolean, default=True)
+    min_price = Column(Numeric(10, 2), default=0.0)
+    max_sponsors = Column(Integer, default=3)
+    quality_score = Column(Float, default=0.80)
+    category = Column(String(32), default="general")
+    webhook_url = Column(String(512), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class Order(Base):
     __tablename__ = "orders"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    source_bot_id = Column(Integer, nullable=True)
+    channel_id = Column(BigInteger, nullable=True, index=True)
+    channel_username = Column(String(64), nullable=True)
+    channel_type = Column(String(32), default="channel")
+    title = Column(String(128), nullable=True)
+    link = Column(String(255), nullable=False)
+    price_per_sub = Column(Numeric(10, 4), default=1.0)
+    total_budget = Column(Numeric(10, 4), default=0.0)
+    remaining_budget = Column(Numeric(10, 4), default=0.0)
+    status = Column(String(32), default="active", index=True)
+    category = Column(String(32), default="general")
+    target_languages = Column(String(64), default="all")
+    target_premium_only = Column(Boolean, default=False)
+    max_per_hour = Column(Integer, nullable=True)
+    users_per_day = Column(Integer, nullable=True)
+    distribute_evenly = Column(Boolean, default=False)
+    auto_approve_join_requests = Column(Boolean, default=True)
+    is_auto_bid_enabled = Column(Boolean, default=False)
+    max_auto_bid = Column(Numeric(10, 4), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+class SubscriptionRecord(Base):
+    __tablename__ = "subscription_records"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False, index=True)
+    bot_id = Column(Integer, ForeignKey("bots.id"), nullable=True, index=True)
+    user_id = Column(BigInteger, nullable=False, index=True)
+    target_chat_id = Column(BigInteger, nullable=True)
+    payout_amount = Column(Numeric(10, 4), default=0.0)
+    status = Column(String(32), default="completed", index=True)
+    checked_retention = Column(Boolean, default=False)
+    sub_id = Column(String(64), nullable=True, index=True)
+    utm_campaign = Column(String(64), nullable=True)
+    joined_at = Column(DateTime, default=datetime.utcnow, index=True)
 
-    traffic_type: Mapped[TrafficType] = mapped_column()
-    destination_type: Mapped[DestinationType] = mapped_column()
-    destination_link: Mapped[str] = mapped_column(String(255))
-    # Заполняется после того, как check-бот подтвердит админ-доступ к чату/каналу.
-    target_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+class Withdrawal(Base):
+    __tablename__ = "withdrawals"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    amount = Column(Numeric(10, 2), nullable=False)
+    requisites = Column(String(128), nullable=False)
+    status = Column(String(32), default="pending", index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
-    status: Mapped[OrderStatus] = mapped_column(default=OrderStatus.PAUSED)
-    price: Mapped[float] = mapped_column(Numeric(3, 2))
-    spent: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
+class ReferralReward(Base):
+    __tablename__ = "referral_rewards"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    referrer_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    source_user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False)
+    level = Column(Integer, default=1)
+    amount = Column(Numeric(10, 4), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
-    users_per_day: Mapped[int | None] = mapped_column(nullable=True)
-    users_total: Mapped[int | None] = mapped_column(nullable=True)
-    distribute_during_day: Mapped[bool] = mapped_column(default=False)
+class PromoCode(Base):
+    __tablename__ = "promo_codes"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(32), unique=True, nullable=False, index=True)
+    reward_amount = Column(Numeric(10, 2), nullable=False)
+    max_activations = Column(Integer, default=1)
+    current_activations = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
-    gender: Mapped[Gender] = mapped_column(default=Gender.ANY)
-    age_group: Mapped[AgeGroup] = mapped_column(default=AgeGroup.ANY)
-    premium_filter: Mapped[PremiumFilter] = mapped_column(default=PremiumFilter.NOT_IMPORTANT)
+class PromoActivation(Base):
+    __tablename__ = "promo_activations"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    promo_id = Column(Integer, ForeignKey("promo_codes.id"), nullable=False)
+    user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, index=True)
+    activated_at = Column(DateTime, default=datetime.utcnow)
 
-    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+class OfferImpression(Base):
+    __tablename__ = "offer_impressions"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, nullable=False, index=True)
+    order_id = Column(Integer, nullable=False, index=True)
+    bot_id = Column(Integer, nullable=False)
+    shown_at = Column(DateTime, default=datetime.utcnow, index=True)
 
-    owner: Mapped["User"] = relationship(back_populates="orders")
-    excluded_categories: Mapped[list["OrderExcludedCategory"]] = relationship(
-        back_populates="order", cascade="all, delete-orphan"
-    )
-    excluded_languages: Mapped[list["OrderExcludedLanguage"]] = relationship(
-        back_populates="order", cascade="all, delete-orphan"
-    )
-    excluded_countries: Mapped[list["OrderExcludedCountry"]] = relationship(
-        back_populates="order", cascade="all, delete-orphan"
-    )
-    join_events: Mapped[list["OrderJoinEvent"]] = relationship(
-        back_populates="order", cascade="all, delete-orphan"
-    )
+class PostbackQueueItem(Base):
+    __tablename__ = "postback_queue"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bot_id = Column(Integer, nullable=False, index=True)
+    webhook_url = Column(String(512), nullable=False)
+    payload_json = Column(Text, nullable=False)
+    signature = Column(String(128), nullable=False)
+    attempts = Column(Integer, default=0)
+    max_attempts = Column(Integer, default=5)
+    next_retry_at = Column(DateTime, default=datetime.utcnow, index=True)
+    status = Column(String(32), default="pending", index=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
-
-class OrderExcludedCategory(Base):
-    __tablename__ = "order_excluded_categories"
-    __table_args__ = (UniqueConstraint("order_id", "category_id"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"))
-    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id", ondelete="CASCADE"))
-
-    order: Mapped["Order"] = relationship(back_populates="excluded_categories")
-    category: Mapped["Category"] = relationship()
-
-
-class OrderExcludedLanguage(Base):
-    __tablename__ = "order_excluded_languages"
-    __table_args__ = (UniqueConstraint("order_id", "code"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"))
-    code: Mapped[str] = mapped_column(String(8))
-
-    order: Mapped["Order"] = relationship(back_populates="excluded_languages")
-
-
-class OrderExcludedCountry(Base):
-    __tablename__ = "order_excluded_countries"
-    __table_args__ = (UniqueConstraint("order_id", "code"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"))
-    code: Mapped[str] = mapped_column(String(8))
-
-    order: Mapped["Order"] = relationship(back_populates="excluded_countries")
-
-
-class OrderJoinEvent(Base):
-    __tablename__ = "order_join_events"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"))
-    telegram_user_id: Mapped[int] = mapped_column(BigInteger)
-    telegram_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # Сумма, реально списанная за это событие — не берём текущую order.price при показе
-    # лога, т.к. цена заказа могла измениться после того, как событие уже оплачено.
-    price: Mapped[float] = mapped_column(Numeric(10, 2))
-    joined_at: Mapped[datetime] = mapped_column(default=_utcnow)
-    left_at: Mapped[datetime | None] = mapped_column(nullable=True)
-
-    order: Mapped["Order"] = relationship(back_populates="join_events")
-
-
-class PlatformSettings(Base):
-    """Единственная строка (id=1) с глобальными настройками платформы."""
-
-    __tablename__ = "platform_settings"
-
-    id: Mapped[int] = mapped_column(primary_key=True, default=1)
-    min_deposit_amount: Mapped[float] = mapped_column(Numeric(10, 2), default=1)
-    min_withdrawal_amount: Mapped[float] = mapped_column(Numeric(10, 2), default=1)
-    sell_ap_enabled: Mapped[bool] = mapped_column(default=True)
-    buy_ap_enabled: Mapped[bool] = mapped_column(default=True)
-
-    # Границы сетки "Мин. цена" в панели бота ("Продать ОП") и значение по умолчанию для
-    # только что подключённых ботов.
-    sell_price_grid_min: Mapped[float] = mapped_column(Numeric(3, 1), default=0.5)
-    sell_price_grid_max: Mapped[float] = mapped_column(Numeric(3, 1), default=3.0)
-    sell_default_min_price: Mapped[float] = mapped_column(Numeric(3, 1), default=0.0)
-
-    # Границы сетки "Макс. спонсоров" и значение по умолчанию для новых ботов.
-    sell_sponsors_grid_min: Mapped[int] = mapped_column(default=1)
-    sell_sponsors_grid_max: Mapped[int] = mapped_column(default=10)
-    sell_default_max_sponsors: Mapped[int] = mapped_column(default=3)
-
-    # Границы сетки цены заказа в "Купить ОП" (сколько рекламодатель платит за
-    # подписчика/показ).
-    buy_price_grid_min: Mapped[float] = mapped_column(Numeric(3, 2), default=1.2)
-    buy_price_grid_max: Mapped[float] = mapped_column(Numeric(3, 2), default=6.0)
-
-
-class DepositInvoice(Base):
-    __tablename__ = "deposit_invoices"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    send_invoice_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    amount: Mapped[float] = mapped_column(Numeric(10, 2))
-    status: Mapped[DepositStatus] = mapped_column(default=DepositStatus.PENDING)
-    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
-    paid_at: Mapped[datetime | None] = mapped_column(nullable=True)
-
-
-class WithdrawalRequest(Base):
-    __tablename__ = "withdrawal_requests"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    amount: Mapped[float] = mapped_column(Numeric(10, 2))
-    status: Mapped[WithdrawalStatus] = mapped_column(default=WithdrawalStatus.PENDING)
-    spend_id: Mapped[str] = mapped_column(String(64), unique=True)
-    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
-    decided_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    decided_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+class BotRequestLog(Base):
+    __tablename__ = "bot_request_logs"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bot_username = Column(String(64), nullable=True)
+    user_id = Column(BigInteger, nullable=True)
+    client_ip = Column(String(45), nullable=True)
+    http_status = Column(Integer, default=200)
+    tasks_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
