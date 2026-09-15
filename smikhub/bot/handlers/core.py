@@ -11,7 +11,8 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from smikhub.db.models import User, Bot, Order
-from smikhub.config import BASE_URL, ADMIN_CHAT_ID, CRYPTO_BOT_TOKEN
+from smikhub.config import BASE_URL, CRYPTO_BOT_TOKEN
+import smikhub.config as config
 
 router = Router()
 
@@ -169,11 +170,18 @@ def kb_cancel(target: str = "main_menu", text_btn: str = "« Отмена") -> I
         [InlineKeyboardButton(text=text_btn, callback_data=target if ':' in target else f"nav:{target}")]
     ])
 
+# ==========================================
+# ПРОВЕРКА АДМИНА
+# ==========================================
 def is_admin_user(user_id: int) -> bool:
-    if not ADMIN_CHAT_ID:
-        return False
-    return str(user_id) == str(ADMIN_CHAT_ID)
-
+    admin_id = getattr(config, 'ADMIN_CHAT_ID', None)
+    admin_ids = getattr(config, 'ADMIN_USER_IDS', [])
+    
+    if admin_id and str(user_id) == str(admin_id):
+        return True
+    if admin_ids and str(user_id) in str(admin_ids):
+        return True
+    return False
 
 # ==========================================
 # Главное меню и /start
@@ -181,6 +189,23 @@ def is_admin_user(user_id: int) -> bool:
 @router.message(CommandStart(deep_link=True))
 @router.message(CommandStart())
 async def start_cmd(message: types.Message, session: AsyncSession, command: CommandObject = None):
+    
+    # --- АВТОМАТИЧЕСКАЯ МИГРАЦИЯ БАЗЫ ---
+    queries = [
+        "ALTER TABLE bots ADD COLUMN subgram_token VARCHAR;",
+        "ALTER TABLE bots ADD COLUMN flyer_token VARCHAR;",
+        "ALTER TABLE bots ADD COLUMN traffy_token VARCHAR;",
+        "ALTER TABLE bots ADD COLUMN piarflow_token VARCHAR;",
+        "ALTER TABLE bots ADD COLUMN tgrass_token VARCHAR;"
+    ]
+    for q in queries:
+        try:
+            await session.execute(text(q))
+            await session.commit()
+        except Exception:
+            await session.rollback()
+    # -------------------------------------
+
     uid = message.from_user.id
     user = await session.get(User, uid)
     ref_id = None
@@ -196,49 +221,19 @@ async def start_cmd(message: types.Message, session: AsyncSession, command: Comm
         session.add(user)
         await session.commit()
 
-    text = (
+    text_msg = (
         "👋 **Добро пожаловать в SmikHub!**\n\n"
         "Биржа обязательных подписок (ОП) в Telegram.\n"
         "Монетизируйте своих ботов или закупайте живой целевой трафик."
     )
-    await message.answer(text, reply_markup=kb_main_menu(is_admin_user(uid)), parse_mode="Markdown")
+    await message.answer(text_msg, reply_markup=kb_main_menu(is_admin_user(uid)), parse_mode="Markdown")
 
 @router.callback_query(F.data == "nav:main_menu")
 async def nav_main_menu(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer()
-    text = "👋 **Главное меню SmikHub**\n\nВыберите нужный раздел:"
-    await callback.message.edit_text(text, reply_markup=kb_main_menu(is_admin_user(callback.from_user.id)), parse_mode="Markdown")
-
-
-# ==========================================
-# Ремонт базы данных (СКРЫТАЯ КОМАНДА)
-# ==========================================
-@router.message(Command("fixdb"))
-async def fix_db_command(message: types.Message, session: AsyncSession):
-    if not is_admin_user(message.from_user.id):
-        await message.answer("Доступ только для администратора.")
-        return
-        
-    queries = [
-        "ALTER TABLE bots ADD COLUMN subgram_token VARCHAR;",
-        "ALTER TABLE bots ADD COLUMN flyer_token VARCHAR;",
-        "ALTER TABLE bots ADD COLUMN traffy_token VARCHAR;",
-        "ALTER TABLE bots ADD COLUMN piarflow_token VARCHAR;",
-        "ALTER TABLE bots ADD COLUMN tgrass_token VARCHAR;"
-    ]
-    
-    success = 0
-    for q in queries:
-        try:
-            await session.execute(text(q))
-            await session.commit()
-            success += 1
-        except Exception:
-            await session.rollback() # Игнорируем, если колонка уже есть
-            
-    await message.answer(f"✅ Структура базы данных успешно обновлена!\n\nТеперь разделы «Продать ОП» и «Админка» снова работают корректно.")
-
+    text_msg = "👋 **Главное меню SmikHub**\n\nВыберите нужный раздел:"
+    await callback.message.edit_text(text_msg, reply_markup=kb_main_menu(is_admin_user(callback.from_user.id)), parse_mode="Markdown")
 
 # ==========================================
 # Админка
@@ -251,7 +246,7 @@ async def admin_command(message: types.Message, session: AsyncSession):
     bots_count = len((await session.execute(select(Bot))).scalars().all())
     orders_count = len((await session.execute(select(Order))).scalars().all())
 
-    text = (
+    text_msg = (
         "🛠 **Административная панель SmikHub**\n\n"
         f"👥 Пользователей: `{users_count}`\n"
         f"🤖 Подключено ботов: `{bots_count}`\n"
@@ -261,7 +256,7 @@ async def admin_command(message: types.Message, session: AsyncSession):
         [InlineKeyboardButton(text="📢 Сделать рассылку", callback_data="admin:broadcast")],
         [InlineKeyboardButton(text="« Назад в меню", callback_data="nav:main_menu")]
     ])
-    await message.answer(text, reply_markup=kb, parse_mode="Markdown")
+    await message.answer(text_msg, reply_markup=kb, parse_mode="Markdown")
 
 @router.callback_query(F.data == "nav:admin")
 async def nav_admin(callback: types.CallbackQuery, session: AsyncSession):
@@ -273,7 +268,7 @@ async def nav_admin(callback: types.CallbackQuery, session: AsyncSession):
     bots_count = len((await session.execute(select(Bot))).scalars().all())
     orders_count = len((await session.execute(select(Order))).scalars().all())
 
-    text = (
+    text_msg = (
         "🛠 **Административная панель SmikHub**\n\n"
         f"👥 Пользователей: `{users_count}`\n"
         f"🤖 Подключено ботов: `{bots_count}`\n"
@@ -283,16 +278,15 @@ async def nav_admin(callback: types.CallbackQuery, session: AsyncSession):
         [InlineKeyboardButton(text="📢 Сделать рассылку", callback_data="admin:broadcast")],
         [InlineKeyboardButton(text="« Назад в меню", callback_data="nav:main_menu")]
     ])
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    await callback.message.edit_text(text_msg, reply_markup=kb, parse_mode="Markdown")
 
 @router.callback_query(F.data == "admin:broadcast")
 async def admin_broadcast(callback: types.CallbackQuery):
     if not is_admin_user(callback.from_user.id):
         return
     await callback.answer()
-    text = "📢 **Рассылка сообщений**\n\nОтправьте текст сообщения для массовой рассылки всем пользователям платформы."
-    await callback.message.edit_text(text, reply_markup=kb_cancel("admin"), parse_mode="Markdown")
-
+    text_msg = "📢 **Рассылка сообщений**\n\nОтправьте текст сообщения для массовой рассылки всем пользователям платформы."
+    await callback.message.edit_text(text_msg, reply_markup=kb_cancel("admin"), parse_mode="Markdown")
 
 # ==========================================
 # Кабинет пользователя (Пополнить / Вывести)
@@ -304,27 +298,27 @@ async def nav_cabinet(callback: types.CallbackQuery, session: AsyncSession, stat
     user = await session.get(User, callback.from_user.id)
     balance = float(user.balance) if user and user.balance else 0.0
 
-    text = (
+    text_msg = (
         f"👤 **Личный кабинет**\n\n"
         f"🆔 Ваш ID: `{callback.from_user.id}`\n"
         f"💰 Основной баланс: **{balance:.2f} RUB**\n\n"
         "Выберите действие для управления балансом:"
     )
-    await callback.message.edit_text(text, reply_markup=kb_cabinet(), parse_mode="Markdown")
+    await callback.message.edit_text(text_msg, reply_markup=kb_cabinet(), parse_mode="Markdown")
 
 @router.callback_query(F.data == "nav:topup_menu")
 async def nav_topup_menu(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer()
-    text = "💳 **Выберите способ пополнения баланса:**"
-    await callback.message.edit_text(text, reply_markup=kb_topup(), parse_mode="Markdown")
+    text_msg = "💳 **Выберите способ пополнения баланса:**"
+    await callback.message.edit_text(text_msg, reply_markup=kb_topup(), parse_mode="Markdown")
 
 @router.callback_query(F.data == "topup:cryptobot")
 async def topup_cryptobot(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(TopupStates.waiting_for_crypto_amount)
-    text = "🤖 Введите сумму пополнения в рублях (минимум 50 RUB):"
-    await callback.message.edit_text(text, reply_markup=kb_cancel("topup_menu"))
+    text_msg = "🤖 Введите сумму пополнения в рублях (минимум 50 RUB):"
+    await callback.message.edit_text(text_msg, reply_markup=kb_cancel("topup_menu"))
 
 @router.message(TopupStates.waiting_for_crypto_amount)
 async def process_crypto_amount(message: types.Message, state: FSMContext):
@@ -369,8 +363,8 @@ async def process_crypto_amount(message: types.Message, state: FSMContext):
 async def topup_stars(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(TopupStates.waiting_for_stars_amount)
-    text = "⭐️ Введите количество Stars для оплаты (1 Star = 1.50 RUB, минимум 10):"
-    await callback.message.edit_text(text, reply_markup=kb_cancel("topup_menu"))
+    text_msg = "⭐️ Введите количество Stars для оплаты (1 Star = 1.50 RUB, минимум 10):"
+    await callback.message.edit_text(text_msg, reply_markup=kb_cancel("topup_menu"))
 
 @router.message(TopupStates.waiting_for_stars_amount)
 async def process_stars_amount(message: types.Message, state: FSMContext):
@@ -417,8 +411,8 @@ async def nav_withdraw_menu(callback: types.CallbackQuery, session: AsyncSession
     await callback.answer()
     user = await session.get(User, callback.from_user.id)
     balance = float(user.balance) if user and user.balance else 0.0
-    text = f"📤 **Вывод заработанных средств**\n\nДоступно к выводу: **{balance:.2f} RUB**\nМинимальная выплата: **100.00 RUB**"
-    await callback.message.edit_text(text, reply_markup=kb_withdraw(), parse_mode="Markdown")
+    text_msg = f"📤 **Вывод заработанных средств**\n\nДоступно к выводу: **{balance:.2f} RUB**\nМинимальная выплата: **100.00 RUB**"
+    await callback.message.edit_text(text_msg, reply_markup=kb_withdraw(), parse_mode="Markdown")
 
 @router.callback_query(F.data == "withdraw:sendpay")
 async def withdraw_sendpay(callback: types.CallbackQuery, session: AsyncSession, state: FSMContext):
@@ -426,12 +420,12 @@ async def withdraw_sendpay(callback: types.CallbackQuery, session: AsyncSession,
     user = await session.get(User, callback.from_user.id)
     balance = float(user.balance) if user and user.balance else 0.0
     if balance < 100.0:
-        text = f"⚠️ **Недостаточно средств**\n\nТекущий баланс: **{balance:.2f} RUB**.\nМинимальный вывод через SendPay: **100.00 RUB**."
-        await callback.message.edit_text(text, reply_markup=kb_cancel("withdraw_menu", "« Назад"), parse_mode="Markdown")
+        text_msg = f"⚠️ **Недостаточно средств**\n\nТекущий баланс: **{balance:.2f} RUB**.\nМинимальный вывод через SendPay: **100.00 RUB**."
+        await callback.message.edit_text(text_msg, reply_markup=kb_cancel("withdraw_menu", "« Назад"), parse_mode="Markdown")
         return
     await state.set_state(WithdrawStates.waiting_for_amount)
-    text = f"💳 **Вывод через SendPay (СБП / Карты РФ)**\n\nДоступно: **{balance:.2f} RUB**\n\nВведите сумму для вывода:"
-    await callback.message.edit_text(text, reply_markup=kb_cancel("withdraw_menu", "« Отмена"), parse_mode="Markdown")
+    text_msg = f"💳 **Вывод через SendPay (СБП / Карты РФ)**\n\nДоступно: **{balance:.2f} RUB**\n\nВведите сумму для вывода:"
+    await callback.message.edit_text(text_msg, reply_markup=kb_cancel("withdraw_menu", "« Отмена"), parse_mode="Markdown")
 
 @router.message(WithdrawStates.waiting_for_amount)
 async def process_withdraw_amount(message: types.Message, state: FSMContext, session: AsyncSession):
@@ -473,7 +467,6 @@ async def process_withdraw_requisites(message: types.Message, state: FSMContext,
         parse_mode="Markdown"
     )
 
-
 # ==========================================
 # Продать ОП (Добавление бота, Модерация)
 # ==========================================
@@ -484,18 +477,18 @@ async def nav_sell_traffic(callback: types.CallbackQuery, session: AsyncSession)
         select(Bot).where(Bot.user_id == callback.from_user.id)
     )).scalars().all()
     if not bots:
-        text = "🤖 **Монетизация (Продажа ОП)**\n\nУ вас пока нет подключённых ботов.\nНажмите «➕ Добавить бота», чтобы отправить заявку на модерацию и начать зарабатывать."
-        await callback.message.edit_text(text, reply_markup=kb_bot_list([]), parse_mode="Markdown")
+        text_msg = "🤖 **Монетизация (Продажа ОП)**\n\nУ вас пока нет подключённых ботов.\nНажмите «➕ Добавить бота», чтобы отправить заявку на модерацию и начать зарабатывать."
+        await callback.message.edit_text(text_msg, reply_markup=kb_bot_list([]), parse_mode="Markdown")
         return
-    text = "🤖 **Ваши подключённые боты:**\n\nВыберите бота для управления параметрами:"
-    await callback.message.edit_text(text, reply_markup=kb_bot_list(bots), parse_mode="Markdown")
+    text_msg = "🤖 **Ваши подключённые боты:**\n\nВыберите бота для управления параметрами:"
+    await callback.message.edit_text(text_msg, reply_markup=kb_bot_list(bots), parse_mode="Markdown")
 
 @router.callback_query(F.data == "nav:add_bot")
 async def nav_add_bot(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(AddBotStates.waiting_for_username)
-    text = "➕ **Добавление нового бота на платформу**\n\nОтправьте юзернейм вашего бота (например, `@MyBestBot`).\nБот будет отправлен администратору на быструю модерацию."
-    await callback.message.edit_text(text, reply_markup=kb_cancel("sell_traffic"), parse_mode="Markdown")
+    text_msg = "➕ **Добавление нового бота на платформу**\n\nОтправьте юзернейм вашего бота (например, `@MyBestBot`).\nБот будет отправлен администратору на быструю модерацию."
+    await callback.message.edit_text(text_msg, reply_markup=kb_cancel("sell_traffic"), parse_mode="Markdown")
 
 @router.message(AddBotStates.waiting_for_username)
 async def process_add_bot_username(message: types.Message, state: FSMContext, session: AsyncSession):
@@ -516,11 +509,13 @@ async def process_add_bot_username(message: types.Message, state: FSMContext, se
     session.add(new_bot)
     await session.commit()
 
-    if ADMIN_CHAT_ID:
+    admin_id = getattr(config, 'ADMIN_CHAT_ID', getattr(config, 'ADMIN_USER_IDS', None))
+    if admin_id:
         try:
             admin_msg = f"🔔 **Новый бот на модерацию!**\n\n• Бот: @{new_bot.username}\n• Владелец ID: `{message.from_user.id}`\n• Имя: @{message.from_user.username or 'без username'}"
+            notify_id = admin_id[0] if isinstance(admin_id, (list, tuple)) else admin_id
             await message.bot.send_message(
-                ADMIN_CHAT_ID,
+                notify_id,
                 admin_msg,
                 reply_markup=kb_admin_bot_moderation(new_bot.id),
                 parse_mode="Markdown"
@@ -528,8 +523,8 @@ async def process_add_bot_username(message: types.Message, state: FSMContext, se
         except Exception:
             pass
 
-    text = f"✅ **Бот @{new_bot.username} отправлен на модерацию!**\n\n🔑 Токен API: `{new_token}`\nПосле подтверждения бот начнёт получать задания."
-    await message.answer(text, reply_markup=kb_cancel("sell_traffic", "« К списку ботов"), parse_mode="Markdown")
+    text_msg = f"✅ **Бот @{new_bot.username} отправлен на модерацию!**\n\n🔑 Токен API: `{new_token}`\nПосле подтверждения бот начнёт получать задания."
+    await message.answer(text_msg, reply_markup=kb_cancel("sell_traffic", "« К списку ботов"), parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("admin_approve_bot:"))
 async def admin_approve_bot(callback: types.CallbackQuery, session: AsyncSession):
@@ -557,7 +552,6 @@ async def admin_reject_bot(callback: types.CallbackQuery, session: AsyncSession)
         await session.commit()
     await callback.message.edit_text(f"❌ Бот #{bot_id} отклонён.")
 
-
 # ==========================================
 # Настройки бота (Цена, Спонсоры)
 # ==========================================
@@ -569,8 +563,8 @@ async def bot_manage(callback: types.CallbackQuery, session: AsyncSession):
     if not bot_obj:
         await callback.message.edit_text("Бот не найден.", reply_markup=kb_cancel("sell_traffic"))
         return
-    text = f"⚙️ **Управление ботом @{bot_obj.username}**\n\n• Мин. цена: **{float(bot_obj.min_price):.2f} RUB**\n• Лимит спонсоров: **{bot_obj.max_sponsors}**\n• Рейтинг качества: **{bot_obj.quality_score * 100:.0f}%**\n\nНастройте параметры кнопками ниже:"
-    await callback.message.edit_text(text, reply_markup=kb_bot_settings(bot_id), parse_mode="Markdown")
+    text_msg = f"⚙️ **Управление ботом @{bot_obj.username}**\n\n• Мин. цена: **{float(bot_obj.min_price):.2f} RUB**\n• Лимит спонсоров: **{bot_obj.max_sponsors}**\n• Рейтинг качества: **{bot_obj.quality_score * 100:.0f}%**\n\nНастройте параметры кнопками ниже:"
+    await callback.message.edit_text(text_msg, reply_markup=kb_bot_settings(bot_id), parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("bot_edit_price:"))
 async def bot_edit_price(callback: types.CallbackQuery, session: AsyncSession):
@@ -585,9 +579,9 @@ async def bot_edit_price(callback: types.CallbackQuery, session: AsyncSession):
     await session.commit()
     
     now_str = datetime.now().strftime('%H:%M:%S')
-    text = f"⚙️ **Управление ботом @{bot_obj.username}**\n\n• Мин. цена: **{float(bot_obj.min_price):.2f} RUB**\n• Лимит спонсоров: **{bot_obj.max_sponsors}**\n• Рейтинг качества: **{bot_obj.quality_score * 100:.0f}%**\n\n_🔄 Обновлено: {now_str}_\nНастройте параметры кнопками ниже:"
+    text_msg = f"⚙️ **Управление ботом @{bot_obj.username}**\n\n• Мин. цена: **{float(bot_obj.min_price):.2f} RUB**\n• Лимит спонсоров: **{bot_obj.max_sponsors}**\n• Рейтинг качества: **{bot_obj.quality_score * 100:.0f}%**\n\n_🔄 Обновлено: {now_str}_\nНастройте параметры кнопками ниже:"
     try:
-        await callback.message.edit_text(text, reply_markup=kb_bot_settings(bot_id), parse_mode="Markdown")
+        await callback.message.edit_text(text_msg, reply_markup=kb_bot_settings(bot_id), parse_mode="Markdown")
         await callback.answer(f"Цена изменена на {next_price:.2f} RUB")
     except Exception:
         await callback.answer("Цена изменена.")
@@ -604,9 +598,9 @@ async def bot_edit_sponsors(callback: types.CallbackQuery, session: AsyncSession
     await session.commit()
     
     now_str = datetime.now().strftime('%H:%M:%S')
-    text = f"⚙️ **Управление ботом @{bot_obj.username}**\n\n• Мин. цена: **{float(bot_obj.min_price):.2f} RUB**\n• Лимит спонсоров: **{bot_obj.max_sponsors}**\n• Рейтинг качества: **{bot_obj.quality_score * 100:.0f}%**\n\n_🔄 Обновлено: {now_str}_\nНастройте параметры кнопками ниже:"
+    text_msg = f"⚙️ **Управление ботом @{bot_obj.username}**\n\n• Мин. цена: **{float(bot_obj.min_price):.2f} RUB**\n• Лимит спонсоров: **{bot_obj.max_sponsors}**\n• Рейтинг качества: **{bot_obj.quality_score * 100:.0f}%**\n\n_🔄 Обновлено: {now_str}_\nНастройте параметры кнопками ниже:"
     try:
-        await callback.message.edit_text(text, reply_markup=kb_bot_settings(bot_id), parse_mode="Markdown")
+        await callback.message.edit_text(text_msg, reply_markup=kb_bot_settings(bot_id), parse_mode="Markdown")
         await callback.answer(f"Лимит спонсоров: {new_limit}")
     except Exception:
         await callback.answer("Лимит изменён.")
@@ -616,15 +610,14 @@ async def bot_show_token(callback: types.CallbackQuery, session: AsyncSession):
     await callback.answer()
     bot_id = int(callback.data.split(":")[1])
     bot_obj = await session.get(Bot, bot_id)
-    text = f"🔑 **Токен интеграции для @{bot_obj.username}:**\n\n`{bot_obj.integration_token}`"
-    await callback.message.edit_text(text, reply_markup=kb_cancel(f"bot_manage:{bot_id}", "« Назад"), parse_mode="Markdown")
+    text_msg = f"🔑 **Токен интеграции для @{bot_obj.username}:**\n\n`{bot_obj.integration_token}`"
+    await callback.message.edit_text(text_msg, reply_markup=kb_cancel(f"bot_manage:{bot_id}", "« Назад"), parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("bot_code_snippet:"))
 async def bot_code_snippet(callback: types.CallbackQuery, session: AsyncSession):
     await callback.answer()
     bot_id = int(callback.data.split(":")[1])
     bot_obj = await session.get(Bot, bot_id)
-    
     code = (
         "import requests\n\n"
         f"url = '{BASE_URL}/api/v1/bot/sponsors'\n"
@@ -633,9 +626,8 @@ async def bot_code_snippet(callback: types.CallbackQuery, session: AsyncSession)
         "response = requests.get(url, headers=headers, params=params).json()\n"
         "sponsors = response.get('sponsors', [])"
     )
-    
-    text = f"📋 **Готовый код интеграции:**\n\n```python\n{code}\n```"
-    await callback.message.edit_text(text, reply_markup=kb_cancel(f"bot_manage:{bot_id}", "« Назад"), parse_mode="Markdown")
+    text_msg = f"📋 **Готовый код интеграции:**\n\n```python\n{code}\n```"
+    await callback.message.edit_text(text_msg, reply_markup=kb_cancel(f"bot_manage:{bot_id}", "« Назад"), parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("bot_delete:"))
 async def bot_delete(callback: types.CallbackQuery, session: AsyncSession):
@@ -647,7 +639,6 @@ async def bot_delete(callback: types.CallbackQuery, session: AsyncSession):
         await session.commit()
     await callback.message.edit_text("🗑 Бот успешно удалён из платформы.", reply_markup=kb_cancel("sell_traffic", "« К списку ботов"))
 
-
 # ==========================================
 # Сторонние интеграции 
 # ==========================================
@@ -655,8 +646,8 @@ async def bot_delete(callback: types.CallbackQuery, session: AsyncSession):
 async def bot_integrations(callback: types.CallbackQuery):
     await callback.answer()
     bot_id = int(callback.data.split(":")[1])
-    text = "🌐 **Сторонние интеграции**\n\nВыберите сервис для подключения API токена:"
-    await callback.message.edit_text(text, reply_markup=kb_integrations(bot_id), parse_mode="Markdown")
+    text_msg = "🌐 **Сторонние интеграции**\n\nВыберите сервис для подключения API токена:"
+    await callback.message.edit_text(text_msg, reply_markup=kb_integrations(bot_id), parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("integ:subgram:"))
 async def integ_subgram(callback: types.CallbackQuery, state: FSMContext):
@@ -664,7 +655,7 @@ async def integ_subgram(callback: types.CallbackQuery, state: FSMContext):
     bot_id = int(callback.data.split(":")[2])
     await state.update_data(bot_id=bot_id)
     await state.set_state(IntegrationStates.waiting_for_subgram)
-    text = (
+    text_msg = (
         "🔑 **Подключение Subgram**\n\n"
         "Subgram — это сервис для заработка на обязательных подписках.\n\n"
         "⚠️ **Важно:** Весь доход от подписок идёт напрямую в Subgram. SmikHub только показывает спонсоров вашим пользователям и не имеет финансовой связи с доходом от Subgram.\n"
@@ -678,7 +669,7 @@ async def integ_subgram(callback: types.CallbackQuery, state: FSMContext):
         "───────────────\n\n"
         "Отправьте токен от Subgram:"
     )
-    await callback.message.edit_text(text, reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Отмена"), parse_mode="Markdown")
+    await callback.message.edit_text(text_msg, reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Отмена"), parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("integ:flyer:"))
 async def integ_flyer(callback: types.CallbackQuery, state: FSMContext):
@@ -686,7 +677,7 @@ async def integ_flyer(callback: types.CallbackQuery, state: FSMContext):
     bot_id = int(callback.data.split(":")[2])
     await state.update_data(bot_id=bot_id)
     await state.set_state(IntegrationStates.waiting_for_flyer)
-    text = (
+    text_msg = (
         "🔑 **Подключение Flyer**\n\n"
         "Flyer — это сервис для заработка на обязательных подписках.\n\n"
         "⚠️ **Важно:** Весь доход от подписок идёт напрямую в Flyer. SmikHub только показывает спонсоров вашим пользователям и не имеет финансовой связи с доходом от Flyer.\n"
@@ -699,7 +690,7 @@ async def integ_flyer(callback: types.CallbackQuery, state: FSMContext):
         "───────────────\n\n"
         "Отправьте токен от Flyer:"
     )
-    await callback.message.edit_text(text, reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Отмена"), parse_mode="Markdown")
+    await callback.message.edit_text(text_msg, reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Отмена"), parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("integ:traffy:"))
 async def integ_traffy(callback: types.CallbackQuery, state: FSMContext):
@@ -707,13 +698,13 @@ async def integ_traffy(callback: types.CallbackQuery, state: FSMContext):
     bot_id = int(callback.data.split(":")[2])
     await state.update_data(bot_id=bot_id)
     await state.set_state(IntegrationStates.waiting_for_traffy)
-    text = (
+    text_msg = (
         "🔑 **Подключение Traffy**\n\n"
         "Traffy — сервис заданий для заработка на обязательных подписках.\n\n"
         "⚠️ **Важно:** Весь доход от заданий идёт напрямую в Traffy. SmikHub только показывает задания вашим пользователям и не имеет финансовой связи с доходом от Traffy.\n\n"
         "Получите Publisher API ключ в `@Traffy_robot` и отправьте его:"
     )
-    await callback.message.edit_text(text, reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Отмена"), parse_mode="Markdown")
+    await callback.message.edit_text(text_msg, reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Отмена"), parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("integ:piarflow:"))
 async def integ_piarflow(callback: types.CallbackQuery, state: FSMContext):
@@ -721,13 +712,13 @@ async def integ_piarflow(callback: types.CallbackQuery, state: FSMContext):
     bot_id = int(callback.data.split(":")[2])
     await state.update_data(bot_id=bot_id)
     await state.set_state(IntegrationStates.waiting_for_piarflow)
-    text = (
+    text_msg = (
         "🔑 **Подключение PiarFlow**\n\n"
         "PiarFlow — биржа рекламы и обязательных подписок.\n\n"
         "⚠️ **Важно:** Весь доход идёт напрямую на ваш баланс в PiarFlow. SmikHub интегрирует API только для отображения спонсоров.\n\n"
         "Получите API ключ (Publisher Token) в личном кабинете PiarFlow и отправьте его сюда:"
     )
-    await callback.message.edit_text(text, reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Отмена"), parse_mode="Markdown")
+    await callback.message.edit_text(text_msg, reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Отмена"), parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("integ:tgrass:"))
 async def integ_tgrass(callback: types.CallbackQuery, state: FSMContext):
@@ -735,13 +726,13 @@ async def integ_tgrass(callback: types.CallbackQuery, state: FSMContext):
     bot_id = int(callback.data.split(":")[2])
     await state.update_data(bot_id=bot_id)
     await state.set_state(IntegrationStates.waiting_for_tgrass)
-    text = (
+    text_msg = (
         "🔑 **Подключение TgGrass**\n\n"
         "TgGrass — платформа монетизации трафика Telegram.\n\n"
         "⚠️ **Важно:** Средства за подписки зачисляются в вашем кабинете TgGrass.\n\n"
         "Скопируйте ваш API токен в боте `@tgrass_bot` (в разделе интеграции/API) и отправьте его:"
     )
-    await callback.message.edit_text(text, reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Отмена"), parse_mode="Markdown")
+    await callback.message.edit_text(text_msg, reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Отмена"), parse_mode="Markdown")
 
 async def _save_integration_token(message: types.Message, state: FSMContext, session: AsyncSession, field_name: str, service_name: str):
     token = message.text.strip()
@@ -756,7 +747,7 @@ async def _save_integration_token(message: types.Message, state: FSMContext, ses
             await session.commit()
             await message.answer(f"✅ Токен {service_name} успешно сохранён и подключён к боту!", reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Назад к сервисам"))
         except Exception:
-            await message.answer("⚠️ Ошибка сохранения. Выполните команду /fixdb от имени администратора.", reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Назад к сервисам"))
+            await message.answer("⚠️ Возникла ошибка при сохранении в базу. База ещё обновляется.", reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Назад к сервисам"))
     else:
         await message.answer("Бот не найден.", reply_markup=kb_cancel("sell_traffic", "« К списку ботов"))
 
@@ -780,7 +771,6 @@ async def proc_piarflow(message: types.Message, state: FSMContext, session: Asyn
 async def proc_tgrass(message: types.Message, state: FSMContext, session: AsyncSession):
     await _save_integration_token(message, state, session, "tgrass_token", "TgGrass")
 
-
 # ==========================================
 # Купить ОП (Создание и управление кампаниями)
 # ==========================================
@@ -791,8 +781,8 @@ async def nav_buy_traffic(callback: types.CallbackQuery, session: AsyncSession):
         select(Order).where(Order.user_id == callback.from_user.id)
     )).scalars().all()
 
-    text = "📢 **Закупка трафика (Купить ОП)**\n\nСоздавайте рекламные кампании для набора живых подписчиков в каналы через сеть ботов SmikHub."
-    await callback.message.edit_text(text, reply_markup=kb_buy_traffic(orders), parse_mode="Markdown")
+    text_msg = "📢 **Закупка трафика (Купить ОП)**\n\nСоздавайте рекламные кампании для набора живых подписчиков в каналы через сеть ботов SmikHub."
+    await callback.message.edit_text(text_msg, reply_markup=kb_buy_traffic(orders), parse_mode="Markdown")
 
 @router.callback_query(F.data == "nav:create_order")
 async def nav_create_order(callback: types.CallbackQuery, session: AsyncSession, state: FSMContext):
@@ -801,13 +791,13 @@ async def nav_create_order(callback: types.CallbackQuery, session: AsyncSession,
     balance = float(user.balance) if user and user.balance else 0.0
 
     if balance < 100.0:
-        text = f"⚠️ **Недостаточно средств**\n\nТекущий баланс: **{balance:.2f} RUB**\nМинимальный бюджет: **100.00 RUB**.\nПополните баланс в разделе «👤 Кабинет»."
-        await callback.message.edit_text(text, reply_markup=kb_cancel("buy_traffic", "« Назад"), parse_mode="Markdown")
+        text_msg = f"⚠️ **Недостаточно средств**\n\nТекущий баланс: **{balance:.2f} RUB**\nМинимальный бюджет: **100.00 RUB**.\nПополните баланс в разделе «👤 Кабинет»."
+        await callback.message.edit_text(text_msg, reply_markup=kb_cancel("buy_traffic", "« Назад"), parse_mode="Markdown")
         return
 
     await state.set_state(CampaignStates.waiting_for_channel)
-    text = "✍️ **Шаг 1/3:** Отправьте ссылку на канал (например, `https://t.me/mychannel`):"
-    await callback.message.edit_text(text, reply_markup=kb_cancel("buy_traffic", "« Отмена"), parse_mode="Markdown")
+    text_msg = "✍️ **Шаг 1/3:** Отправьте ссылку на канал (например, `https://t.me/mychannel`):"
+    await callback.message.edit_text(text_msg, reply_markup=kb_cancel("buy_traffic", "« Отмена"), parse_mode="Markdown")
 
 @router.message(CampaignStates.waiting_for_channel)
 async def process_campaign_channel(message: types.Message, state: FSMContext):
@@ -888,7 +878,7 @@ async def order_view(callback: types.CallbackQuery, session: AsyncSession):
     status_emoji = "🟢 Активен" if order_obj.status == "active" else "⏸ На паузе"
     now_str = datetime.now().strftime('%H:%M:%S')
 
-    text = (
+    text_msg = (
         f"🛍 **Заказ #{order_obj.id}**\n\n"
         "Трафик: Подписки\n"
         "Назначение: Канал/чат\n"
@@ -898,7 +888,7 @@ async def order_view(callback: types.CallbackQuery, session: AsyncSession):
         f"_🔄 Обновлено: {now_str}_"
     )
     try:
-        await callback.message.edit_text(text, reply_markup=kb_order_control(order_obj.id, order_obj.status, price), parse_mode="Markdown")
+        await callback.message.edit_text(text_msg, reply_markup=kb_order_control(order_obj.id, order_obj.status, price), parse_mode="Markdown")
     except Exception:
         pass
 
@@ -940,10 +930,10 @@ async def nav_referrals(callback: types.CallbackQuery):
     await callback.answer()
     bot_me = await callback.bot.get_me()
     link = f"https://t.me/{bot_me.username}?start=ref_{callback.from_user.id}"
-    text = (
+    text_msg = (
         "🤝 **Партнёрская программа SmikHub**\n\n"
         "• **5%** от дохода ботов 1-го уровня\n"
         "• **2%** от дохода ботов 2-го уровня\n\n"
         f"🔗 Ваша реферальная ссылка:\n`{link}`"
     )
-    await callback.message.edit_text(text, reply_markup=kb_cancel("main_menu", "« Назад"), parse_mode="Markdown")
+    await callback.message.edit_text(text_msg, reply_markup=kb_cancel("main_menu", "« Назад"), parse_mode="Markdown")
