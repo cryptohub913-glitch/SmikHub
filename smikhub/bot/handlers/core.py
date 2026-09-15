@@ -7,10 +7,10 @@ from aiogram.filters import CommandStart, CommandObject, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
-from sqlalchemy import select, text
+from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smikhub.db.models import User, Bot, Order
+from smikhub.db.models import User, Bot, Order, Withdrawal
 from smikhub.config import CRYPTO_BOT_TOKEN
 import smikhub.config as config
 
@@ -42,8 +42,13 @@ class IntegrationStates(StatesGroup):
     waiting_for_piarflow = State()
     waiting_for_tgrass = State()
 
+class AdminStates(StatesGroup):
+    waiting_for_broadcast = State()
+    waiting_for_bot_search = State()
+    waiting_for_quality_score = State()
+
 # ==========================================
-# Клавиатуры интерфейса
+# Клавиатуры пользователя
 # ==========================================
 def kb_main_menu(is_admin: bool = False) -> InlineKeyboardMarkup:
     rows = [
@@ -83,7 +88,7 @@ def kb_withdraw() -> InlineKeyboardMarkup:
 def kb_bot_list(bots: list) -> InlineKeyboardMarkup:
     buttons = []
     for b in bots:
-        status_icon = "🟢" if getattr(b, "is_approved", True) else "⏳"
+        status_icon = "🟢" if getattr(b, "is_active", True) else "🔴"
         buttons.append([InlineKeyboardButton(text=f"{status_icon} @{b.username}", callback_data=f"bot_manage:{b.id}")])
     buttons.append([InlineKeyboardButton(text="➕ Добавить бота", callback_data="nav:add_bot")])
     buttons.append([InlineKeyboardButton(text="« Назад в меню", callback_data="nav:main_menu")])
@@ -106,35 +111,30 @@ def kb_bot_settings(bot_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="« Назад к списку ботов", callback_data="nav:sell_traffic")]
     ])
 
-# --- Новые клавиатуры для сеток выбора ---
 def kb_price_grid(bot_id: int) -> InlineKeyboardMarkup:
     buttons = []
-    # Диапазон 1.0 - 4.9
     for i in range(10, 50, 5):
         row = []
         for j in range(5):
             val = (i + j) / 10.0
             row.append(InlineKeyboardButton(text=f"{val:.1f}р.", callback_data=f"set_prc:{bot_id}:{val:.1f}"))
         buttons.append(row)
-    # Диапазон 5.0 - 14.0
     for i in range(5, 15, 5):
         row = []
         for j in range(5):
             val = float(i + j)
             row.append(InlineKeyboardButton(text=f"{val:.1f}р.", callback_data=f"set_prc:{bot_id}:{val:.1f}"))
         buttons.append(row)
-    # Завершающая строка
     buttons.append([InlineKeyboardButton(text="15.0р.", callback_data=f"set_prc:{bot_id}:15.0")])
     buttons.append([InlineKeyboardButton(text="« Отмена", callback_data=f"bot_manage:{bot_id}")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def kb_sponsors_grid(bot_id: int) -> InlineKeyboardMarkup:
-    buttons = []
-    row1 = [InlineKeyboardButton(text=f"{i}", callback_data=f"set_spn:{bot_id}:{i}") for i in range(1, 6)]
-    row2 = [InlineKeyboardButton(text=f"{i}", callback_data=f"set_spn:{bot_id}:{i}") for i in range(6, 11)]
-    buttons.append(row1)
-    buttons.append(row2)
-    buttons.append([InlineKeyboardButton(text="« Отмена", callback_data=f"bot_manage:{bot_id}")])
+    buttons = [
+        [InlineKeyboardButton(text=f"{i}", callback_data=f"set_spn:{bot_id}:{i}") for i in range(1, 6)],
+        [InlineKeyboardButton(text=f"{i}", callback_data=f"set_spn:{bot_id}:{i}") for i in range(6, 11)],
+        [InlineKeyboardButton(text="« Отмена", callback_data=f"bot_manage:{bot_id}")]
+    ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def kb_delete_confirm(bot_id: int) -> InlineKeyboardMarkup:
@@ -142,7 +142,6 @@ def kb_delete_confirm(bot_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⚠️ Да, удалить бота", callback_data=f"del_conf:{bot_id}")],
         [InlineKeyboardButton(text="« Отмена", callback_data=f"bot_manage:{bot_id}")]
     ])
-# ------------------------------------------
 
 def kb_integrations(bot_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -209,8 +208,30 @@ def kb_cancel(target: str = "main_menu", text_btn: str = "« Отмена") -> I
     ])
 
 # ==========================================
-# ПРОВЕРКА АДМИНА
+# Клавиатуры администратора
 # ==========================================
+def kb_admin_main() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🤖 Управление ботами", callback_data="admin:bots_list"),
+            InlineKeyboardButton(text="🔍 Найти бота", callback_data="admin:search_bot")
+        ],
+        [
+            InlineKeyboardButton(text="📤 Заявки на вывод", callback_data="admin:withdrawals"),
+            InlineKeyboardButton(text="📢 Рассылка", callback_data="admin:broadcast")
+        ],
+        [InlineKeyboardButton(text="« Назад в главное меню", callback_data="nav:main_menu")]
+    ])
+
+def kb_admin_bot_card(bot_id: int, is_active: bool) -> InlineKeyboardMarkup:
+    ban_btn_text = "🔴 Заблокировать бота" if is_active else "🟢 Разблокировать бота"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=ban_btn_text, callback_data=f"admin:toggle_bot:{bot_id}")],
+        [InlineKeyboardButton(text="⭐ Изменить качество аудитории", callback_data=f"admin:edit_quality:{bot_id}")],
+        [InlineKeyboardButton(text="🗑 Удалить бота из базы", callback_data=f"admin:delete_bot:{bot_id}")],
+        [InlineKeyboardButton(text="« К списку ботов", callback_data="admin:bots_list")]
+    ])
+
 def is_admin_user(user_id: int) -> bool:
     if str(user_id) == "6470511118":
         return True
@@ -222,14 +243,12 @@ def is_admin_user(user_id: int) -> bool:
         return True
     return False
 
-
 # ==========================================
 # Главное меню и /start
 # ==========================================
 @router.message(CommandStart(deep_link=True))
 @router.message(CommandStart())
 async def start_cmd(message: types.Message, session: AsyncSession, command: CommandObject = None):
-    # АВТОМАТИЧЕСКАЯ МИГРАЦИЯ БАЗЫ
     queries = [
         "ALTER TABLE bots ADD COLUMN subgram_token VARCHAR;",
         "ALTER TABLE bots ADD COLUMN flyer_token VARCHAR;",
@@ -273,83 +292,305 @@ async def nav_main_menu(callback: types.CallbackQuery, state: FSMContext):
     text_msg = "👋 **Главное меню SmikHub**\n\nВыберите нужный раздел:"
     await callback.message.edit_text(text_msg, reply_markup=kb_main_menu(is_admin_user(callback.from_user.id)), parse_mode="Markdown")
 
-
 # ==========================================
-# Ремонт БД
-# ==========================================
-@router.message(Command("fixdb"))
-async def fix_db_command(message: types.Message, session: AsyncSession):
-    if not is_admin_user(message.from_user.id):
-        await message.answer("Доступ только для администратора.")
-        return
-    queries = [
-        "ALTER TABLE bots ADD COLUMN subgram_token VARCHAR;",
-        "ALTER TABLE bots ADD COLUMN flyer_token VARCHAR;",
-        "ALTER TABLE bots ADD COLUMN traffy_token VARCHAR;",
-        "ALTER TABLE bots ADD COLUMN piarflow_token VARCHAR;",
-        "ALTER TABLE bots ADD COLUMN tgrass_token VARCHAR;"
-    ]
-    for q in queries:
-        try:
-            await session.execute(text(q))
-            await session.commit()
-        except Exception:
-            await session.rollback()
-    await message.answer(f"✅ База данных обновлена!\n\nРазделы «Продать ОП» и «Админка» должны работать.")
-
-# ==========================================
-# Админка
+# Админ-панель: Прозрачность и управление
 # ==========================================
 @router.message(Command("admin"))
 async def admin_command(message: types.Message, session: AsyncSession):
     if not is_admin_user(message.from_user.id):
         return
-    users_count = len((await session.execute(select(User))).scalars().all())
-    bots_count = len((await session.execute(select(Bot))).scalars().all())
-    orders_count = len((await session.execute(select(Order))).scalars().all())
+    users_count = (await session.execute(select(func.count(User.id)))).scalar() or 0
+    bots_count = (await session.execute(select(func.count(Bot.id)))).scalar() or 0
+    orders_count = (await session.execute(select(func.count(Order.id)))).scalar() or 0
 
     text_msg = (
         "🛠 **Административная панель SmikHub**\n\n"
-        f"👥 Пользователей: `{users_count}`\n"
+        f"👥 Всего пользователей: `{users_count}`\n"
         f"🤖 Подключено ботов: `{bots_count}`\n"
-        f"📢 Заказов: `{orders_count}`"
+        f"📢 Рекламных заказов: `{orders_count}`\n\n"
+        "Выберите раздел для полного аудита и управления:"
     )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📢 Сделать рассылку", callback_data="admin:broadcast")],
-        [InlineKeyboardButton(text="« Назад в меню", callback_data="nav:main_menu")]
-    ])
-    await message.answer(text_msg, reply_markup=kb, parse_mode="Markdown")
+    await message.answer(text_msg, reply_markup=kb_admin_main(), parse_mode="Markdown")
 
 @router.callback_query(F.data == "nav:admin")
-async def nav_admin(callback: types.CallbackQuery, session: AsyncSession):
+async def nav_admin(callback: types.CallbackQuery, session: AsyncSession, state: FSMContext):
     if not is_admin_user(callback.from_user.id):
         await callback.answer("Доступ запрещен.", show_alert=True)
         return
+    await state.clear()
     await callback.answer()
-    users_count = len((await session.execute(select(User))).scalars().all())
-    bots_count = len((await session.execute(select(Bot))).scalars().all())
-    orders_count = len((await session.execute(select(Order))).scalars().all())
+    users_count = (await session.execute(select(func.count(User.id)))).scalar() or 0
+    bots_count = (await session.execute(select(func.count(Bot.id)))).scalar() or 0
+    orders_count = (await session.execute(select(func.count(Order.id)))).scalar() or 0
 
     text_msg = (
         "🛠 **Административная панель SmikHub**\n\n"
-        f"👥 Пользователей: `{users_count}`\n"
+        f"👥 Всего пользователей: `{users_count}`\n"
         f"🤖 Подключено ботов: `{bots_count}`\n"
-        f"📢 Заказов: `{orders_count}`"
+        f"📢 Рекламных заказов: `{orders_count}`\n\n"
+        "Выберите раздел для аудита и управления:"
     )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📢 Сделать рассылку", callback_data="admin:broadcast")],
-        [InlineKeyboardButton(text="« Назад в меню", callback_data="nav:main_menu")]
-    ])
-    await callback.message.edit_text(text_msg, reply_markup=kb, parse_mode="Markdown")
+    await callback.message.edit_text(text_msg, reply_markup=kb_admin_main(), parse_mode="Markdown")
 
-@router.callback_query(F.data == "admin:broadcast")
-async def admin_broadcast(callback: types.CallbackQuery):
+# Список всех ботов в сети для админа
+@router.callback_query(F.data == "admin:bots_list")
+async def admin_bots_list(callback: types.CallbackQuery, session: AsyncSession):
     if not is_admin_user(callback.from_user.id):
         return
     await callback.answer()
-    text_msg = "📢 **Рассылка сообщений**\n\nОтправьте текст сообщения для массовой рассылки всем пользователям платформы."
-    await callback.message.edit_text(text_msg, reply_markup=kb_cancel("admin"), parse_mode="Markdown")
+    bots = (await session.execute(select(Bot).order_by(Bot.id.desc()).limit(30))).scalars().all()
 
+    buttons = []
+    for b in bots:
+        st = "🟢" if b.is_active else "🔴"
+        q_pct = int((b.quality_score or 0.8) * 100)
+        buttons.append([InlineKeyboardButton(
+            text=f"{st} #{b.id} @{b.username} (Качество: {q_pct}%)",
+            callback_data=f"admin:bot_card:{b.id}"
+        )])
+    buttons.append([InlineKeyboardButton(text="🔍 Найти бота (ID / @username)", callback_data="admin:search_bot")])
+    buttons.append([InlineKeyboardButton(text="« Назад в админку", callback_data="nav:admin")])
+
+    await callback.message.edit_text(
+        "🤖 **Реестр подключенных ботов платформы:**\n\nНажмите на бота для проверки качества аудитории и управления доступом:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="Markdown"
+    )
+
+# Поиск бота
+@router.callback_query(F.data == "admin:search_bot")
+async def admin_search_bot(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin_user(callback.from_user.id):
+        return
+    await callback.answer()
+    await state.set_state(AdminStates.waiting_for_bot_search)
+    await callback.message.edit_text(
+        "🔍 **Поиск бота**\n\nВведите **ID бота** (число) или **юзернейм** (например, `@Bot_1118` или `Bot_1118`):",
+        reply_markup=kb_cancel("admin", "« Отмена"),
+        parse_mode="Markdown"
+    )
+
+@router.message(AdminStates.waiting_for_bot_search)
+async def process_admin_bot_search(message: types.Message, state: FSMContext, session: AsyncSession):
+    if not is_admin_user(message.from_user.id):
+        return
+    query = message.text.strip().replace("@", "")
+    await state.clear()
+
+    bot_obj = None
+    if query.isdigit():
+        bot_obj = await session.get(Bot, int(query))
+    if not bot_obj:
+        bot_obj = (await session.execute(select(Bot).where(Bot.username.ilike(query)))).scalar_one_or_none()
+
+    if not bot_obj:
+        await message.answer("❌ Бот с такими параметрами не найден.", reply_markup=kb_cancel("admin", "« В админку"))
+        return
+
+    await render_bot_admin_card(message, bot_obj, session)
+
+# Карточка аудита бота
+@router.callback_query(F.data.startswith("admin:bot_card:"))
+async def admin_bot_card_handler(callback: types.CallbackQuery, session: AsyncSession):
+    if not is_admin_user(callback.from_user.id):
+        return
+    await callback.answer()
+    bot_id = int(callback.data.split(":")[2])
+    bot_obj = await session.get(Bot, bot_id)
+    if not bot_obj:
+        await callback.message.edit_text("Бот не найден.", reply_markup=kb_cancel("admin"))
+        return
+    await render_bot_admin_card(callback.message, bot_obj, session, edit=True)
+
+async def render_bot_admin_card(message_or_callback_msg: types.Message, bot_obj: Bot, session: AsyncSession, edit: bool = False):
+    owner = await session.get(User, bot_obj.user_id)
+    owner_str = f"@{owner.username}" if owner and owner.username else f"ID: {bot_obj.user_id}"
+    quality_pct = int((bot_obj.quality_score or 0.8) * 100)
+    status_text = "🟢 Активен (Получает задания)" if bot_obj.is_active else "🔴 Заблокирован / Отключен"
+
+    card_text = (
+        f"📊 **Аудит бота #{bot_obj.id} — @{bot_obj.username}**\n\n"
+        f"• **Статус в бирже:** {status_text}\n"
+        f"• **Владелец:** {owner_str} (`{bot_obj.user_id}`)\n"
+        f"• **Качество аудитории:** **{quality_pct}%** (Коэф: `{bot_obj.quality_score:.2f}`)\n"
+        f"• **Мин. ставка (CPC):** `{float(bot_obj.min_price):.2f} RUB`\n"
+        f"• **Лимит спонсоров:** `{bot_obj.max_sponsors}`\n"
+        f"• **Токен интеграции:** `{bot_obj.integration_token}`\n\n"
+        f"🌐 **Подключённые сторонние шлюзы:**\n"
+        f"  Subgram: `{'Подключен' if bot_obj.subgram_token else 'Нет'}`\n"
+        f"  Flyer: `{'Подключен' if bot_obj.flyer_token else 'Нет'}`\n"
+        f"  Traffy: `{'Подключен' if bot_obj.traffy_token else 'Нет'}`\n"
+        f"  PiarFlow: `{'Подключен' if bot_obj.piarflow_token else 'Нет'}`\n"
+        f"  TgGrass: `{'Подключен' if bot_obj.tgrass_token else 'Нет'}`"
+    )
+    kb = kb_admin_bot_card(bot_obj.id, bot_obj.is_active)
+    if edit:
+        await message_or_callback_msg.edit_text(card_text, reply_markup=kb, parse_mode="Markdown")
+    else:
+        await message_or_callback_msg.answer(card_text, reply_markup=kb, parse_mode="Markdown")
+
+# Переключатель бана/разбана бота
+@router.callback_query(F.data.startswith("admin:toggle_bot:"))
+async def admin_toggle_bot(callback: types.CallbackQuery, session: AsyncSession):
+    if not is_admin_user(callback.from_user.id):
+        return
+    bot_id = int(callback.data.split(":")[2])
+    bot_obj = await session.get(Bot, bot_id)
+    if bot_obj:
+        bot_obj.is_active = not bot_obj.is_active
+        await session.commit()
+        status_word = "разблокирован" if bot_obj.is_active else "заблокирован"
+        await callback.answer(f"Бот #{bot_id} {status_word}!")
+        await render_bot_admin_card(callback.message, bot_obj, session, edit=True)
+
+# Ручное изменение качества аудитории
+@router.callback_query(F.data.startswith("admin:edit_quality:"))
+async def admin_edit_quality(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin_user(callback.from_user.id):
+        return
+    await callback.answer()
+    bot_id = int(callback.data.split(":")[2])
+    await state.update_data(target_bot_id=bot_id)
+    await state.set_state(AdminStates.waiting_for_quality_score)
+    await callback.message.edit_text(
+        f"⭐ **Настройка качества аудитории для бота #{bot_id}**\n\n"
+        "Введите коэффициент качества от **0.1** до **1.0**\n"
+        "(Например: `0.9` = 90% качества, `0.5` = 50% качества):",
+        reply_markup=kb_cancel("admin:bots_list", "« Отмена"),
+        parse_mode="Markdown"
+    )
+
+@router.message(AdminStates.waiting_for_quality_score)
+async def process_admin_quality_score(message: types.Message, state: FSMContext, session: AsyncSession):
+    if not is_admin_user(message.from_user.id):
+        return
+    try:
+        val = float(message.text.strip().replace(",", "."))
+        if val < 0.05 or val > 1.0:
+            raise ValueError()
+    except ValueError:
+        await message.answer("⚠️ Введите число от 0.1 до 1.0:")
+        return
+
+    data = await state.get_data()
+    bot_id = data.get("target_bot_id")
+    await state.clear()
+
+    bot_obj = await session.get(Bot, bot_id)
+    if bot_obj:
+        bot_obj.quality_score = val
+        await session.commit()
+        await message.answer(f"✅ Качество аудитории бота #{bot_id} установлено на **{int(val * 100)}%**.")
+        await render_bot_admin_card(message, bot_obj, session, edit=False)
+
+# Удаление бота администратором
+@router.callback_query(F.data.startswith("admin:delete_bot:"))
+async def admin_delete_bot(callback: types.CallbackQuery, session: AsyncSession):
+    if not is_admin_user(callback.from_user.id):
+        return
+    bot_id = int(callback.data.split(":")[2])
+    bot_obj = await session.get(Bot, bot_id)
+    if bot_obj:
+        await session.delete(bot_obj)
+        await session.commit()
+        await callback.answer("Бот удалён из базы.")
+    await admin_bots_list(callback, session)
+
+# Управление заявками на вывод в админке
+@router.callback_query(F.data == "admin:withdrawals")
+async def admin_withdrawals(callback: types.CallbackQuery, session: AsyncSession):
+    if not is_admin_user(callback.from_user.id):
+        return
+    await callback.answer()
+    items = (await session.execute(
+        select(Withdrawal).where(Withdrawal.status == "pending").order_by(Withdrawal.id.desc()).limit(10)
+    )).scalars().all()
+
+    if not items:
+        await callback.message.edit_text(
+            "📤 **Заявки на вывод средств**\n\nНет активных заявок в очереди.",
+            reply_markup=kb_cancel("admin", "« Назад"),
+            parse_mode="Markdown"
+        )
+        return
+
+    buttons = []
+    text_lines = ["📤 **Заявки на вывод (Ожидают выплаты):**\n"]
+    for w in items:
+        text_lines.append(f"• Заявка #{w.id}: `{float(w.amount):.2f} RUB` | Реквизиты: `{w.requisites}` | User ID: `{w.user_id}`")
+        buttons.append([
+            InlineKeyboardButton(text=f"✅ Выплачено #{w.id}", callback_data=f"admin_w_pay:{w.id}"),
+            InlineKeyboardButton(text=f"❌ Отклонить #{w.id}", callback_data=f"admin_w_rej:{w.id}")
+        ])
+    buttons.append([InlineKeyboardButton(text="« Назад в админку", callback_data="nav:admin")])
+
+    await callback.message.edit_text("\n".join(text_lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="Markdown")
+
+@router.callback_query(F.data.startswith("admin_w_pay:"))
+async def admin_w_pay(callback: types.CallbackQuery, session: AsyncSession):
+    if not is_admin_user(callback.from_user.id):
+        return
+    w_id = int(callback.data.split(":")[1])
+    w_obj = await session.get(Withdrawal, w_id)
+    if w_obj:
+        w_obj.status = "completed"
+        await session.commit()
+        try:
+            await callback.bot.send_message(w_obj.user_id, f"✅ Ваша выплата #{w_obj.id} на сумму {w_obj.amount:.2f} RUB успешно отправлена!")
+        except Exception:
+            pass
+        await callback.answer(f"Заявка #{w_id} помечена как выполненная.")
+    await admin_withdrawals(callback, session)
+
+@router.callback_query(F.data.startswith("admin_w_rej:"))
+async def admin_w_rej(callback: types.CallbackQuery, session: AsyncSession):
+    if not is_admin_user(callback.from_user.id):
+        return
+    w_id = int(callback.data.split(":")[1])
+    w_obj = await session.get(Withdrawal, w_id)
+    if w_obj:
+        w_obj.status = "rejected"
+        user = await session.get(User, w_obj.user_id)
+        if user:
+            user.balance += w_obj.amount
+        await session.commit()
+        try:
+            await callback.bot.send_message(w_obj.user_id, f"❌ Ваша выплата #{w_obj.id} отклонена. Средства возвращены на баланс.")
+        except Exception:
+            pass
+        await callback.answer(f"Заявка #{w_id} отклонена, баланс возвращён.")
+    await admin_withdrawals(callback, session)
+
+# Рассылка
+@router.callback_query(F.data == "admin:broadcast")
+async def admin_broadcast_prompt(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin_user(callback.from_user.id):
+        return
+    await callback.answer()
+    await state.set_state(AdminStates.waiting_for_broadcast)
+    await callback.message.edit_text(
+        "📢 **Рассылка сообщений**\n\nОтправьте текст или медиа, которое увидят все пользователи SmikHub:",
+        reply_markup=kb_cancel("admin", "« Отмена"),
+        parse_mode="Markdown"
+    )
+
+@router.message(AdminStates.waiting_for_broadcast)
+async def process_admin_broadcast(message: types.Message, state: FSMContext, session: AsyncSession):
+    if not is_admin_user(message.from_user.id):
+        return
+    await state.clear()
+    users = (await session.execute(select(User.id))).scalars().all()
+    sent_count = 0
+    status_msg = await message.answer(f"⏳ Запуск рассылки на {len(users)} пользователей...")
+
+    for uid in users:
+        try:
+            await message.copy_to(chat_id=uid)
+            sent_count += 1
+        except Exception:
+            continue
+
+    await status_msg.edit_text(f"✅ Рассылка завершена!\nУспешно доставлено: {sent_count} из {len(users)} пользователей.", reply_markup=kb_cancel("admin", "« В админку"))
 
 # ==========================================
 # Кабинет пользователя
@@ -523,9 +764,16 @@ async def process_withdraw_requisites(message: types.Message, state: FSMContext,
         await message.answer("⚠️ На балансе недостаточно средств.", reply_markup=kb_main_menu(is_admin_user(message.from_user.id)))
         return
     user.balance -= Decimal(str(amount))
+    new_w = Withdrawal(
+        user_id=message.from_user.id,
+        amount=Decimal(str(amount)),
+        requisites=requisites,
+        status="pending"
+    )
+    session.add(new_w)
     await session.commit()
     await message.answer(
-        f"✅ **Заявка на вывод #{secrets.token_hex(4)} принята!**\n\n• Сумма: **{amount:.2f} RUB**\n• Реквизиты: `{requisites}`\n• Платёжный шлюз: **SendPay (Авто)**\n\nСредства поступят на карту в течение 10–15 минут.",
+        f"✅ **Заявка на вывод #{new_w.id} принята!**\n\n• Сумма: **{amount:.2f} RUB**\n• Реквизиты: `{requisites}`\n• Статус: **В очереди на выплату**\n\nСредства поступят после подтверждения оператором.",
         reply_markup=kb_main_menu(is_admin_user(message.from_user.id)),
         parse_mode="Markdown"
     )
@@ -567,13 +815,14 @@ async def process_add_bot_username(message: types.Message, state: FSMContext, se
         integration_token=new_token,
         min_price=Decimal("0.50"),
         max_sponsors=3,
-        quality_score=0.80
+        quality_score=0.80,
+        is_active=True
     )
     session.add(new_bot)
     await session.commit()
 
     try:
-        admin_msg = f"🔔 **Новый бот на модерацию!**\n\n• Бот: @{new_bot.username}\n• Владелец ID: `{message.from_user.id}`\n• Имя: @{message.from_user.username or 'без username'}"
+        admin_msg = f"🔔 **Новый бот на модерацию!**\n\n• Бот: @{new_bot.username} (ID: #{new_bot.id})\n• Владелец ID: `{message.from_user.id}`\n• Имя: @{message.from_user.username or 'без username'}"
         await message.bot.send_message(
             6470511118,
             admin_msg,
@@ -592,11 +841,13 @@ async def admin_approve_bot(callback: types.CallbackQuery, session: AsyncSession
     bot_id = int(callback.data.split(":")[1])
     bot_obj = await session.get(Bot, bot_id)
     if bot_obj:
+        bot_obj.is_active = True
+        await session.commit()
         try:
             await callback.bot.send_message(bot_obj.user_id, f"🎉 **Ваш бот @{bot_obj.username} успешно прошёл модерацию и активирован!**", parse_mode="Markdown")
         except Exception:
             pass
-    await callback.message.edit_text(f"✅ Бот #{bot_id} одобрен.")
+    await callback.message.edit_text(f"✅ Бот #{bot_id} одобрен администратором.")
 
 @router.callback_query(F.data.startswith("admin_reject_bot:"))
 async def admin_reject_bot(callback: types.CallbackQuery, session: AsyncSession):
@@ -610,7 +861,7 @@ async def admin_reject_bot(callback: types.CallbackQuery, session: AsyncSession)
             pass
         await session.delete(bot_obj)
         await session.commit()
-    await callback.message.edit_text(f"❌ Бот #{bot_id} отклонён.")
+    await callback.message.edit_text(f"❌ Бот #{bot_id} отклонён и удалён.")
 
 # ==========================================
 # Настройки бота (Цена, Спонсоры, Удаление)
@@ -623,7 +874,13 @@ async def bot_manage(callback: types.CallbackQuery, session: AsyncSession):
     if not bot_obj:
         await callback.message.edit_text("Бот не найден.", reply_markup=kb_cancel("sell_traffic"))
         return
-    text_msg = f"⚙️ **Управление ботом @{bot_obj.username}**\n\n• Мин. цена: **{float(bot_obj.min_price):.2f} RUB**\n• Лимит спонсоров: **{bot_obj.max_sponsors}**\n• Рейтинг качества: **{bot_obj.quality_score * 100:.0f}%**\n\nНастройте параметры кнопками ниже:"
+    text_msg = (
+        f"⚙️ **Управление ботом @{bot_obj.username}**\n\n"
+        f"• Мин. цена: **{float(bot_obj.min_price):.2f} RUB**\n"
+        f"• Лимит спонсоров: **{bot_obj.max_sponsors}**\n"
+        f"• Рейтинг качества: **{bot_obj.quality_score * 100:.0f}%**\n\n"
+        "Настройте параметры кнопками ниже:"
+    )
     await callback.message.edit_text(text_msg, reply_markup=kb_bot_settings(bot_id), parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("bot_edit_price:"))
@@ -686,7 +943,6 @@ async def bot_code_snippet(callback: types.CallbackQuery, session: AsyncSession)
         "response = requests.get(url, headers=headers, params=params).json()\n"
         "sponsors = response.get('sponsors', [])"
     )
-    # Используем HTML, чтобы код не сломался и выглядел точно как на скриншоте (легко копировался)
     text_msg = f"📋 <b>Готовый код интеграции:</b>\n\n<pre><code class=\"language-python\">{code}</code></pre>"
     await callback.message.edit_text(text_msg, reply_markup=kb_cancel(f"bot_manage:{bot_id}", "« Назад"), parse_mode="HTML")
 
@@ -815,7 +1071,7 @@ async def _save_integration_token(message: types.Message, state: FSMContext, ses
             await session.commit()
             await message.answer(f"✅ Токен {service_name} успешно сохранён и подключён к боту!", reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Назад к сервисам"))
         except Exception:
-            await message.answer("⚠️ Возникла ошибка при сохранении в базу. Выполните команду /fixdb", reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Назад к сервисам"))
+            await message.answer("⚠️ Ошибка сохранения в БД.", reply_markup=kb_cancel(f"bot_integrations:{bot_id}", "« Назад к сервисам"))
     else:
         await message.answer("Бот не найден.", reply_markup=kb_cancel("sell_traffic", "« К списку ботов"))
 
@@ -840,7 +1096,7 @@ async def proc_tgrass(message: types.Message, state: FSMContext, session: AsyncS
     await _save_integration_token(message, state, session, "tgrass_token", "TgGrass")
 
 # ==========================================
-# Купить ОП (Создание и управление кампаниями)
+# Купить ОП (Кампании)
 # ==========================================
 @router.callback_query(F.data == "nav:buy_traffic")
 async def nav_buy_traffic(callback: types.CallbackQuery, session: AsyncSession):
