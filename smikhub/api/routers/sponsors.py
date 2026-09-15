@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from smikhub.db.models import Bot, Order
-from api.deps import get_db
+from smikhub.api.deps import get_db
 
 # Обрати внимание, префикс может быть просто "/", если он уже задан в main.py
 router = APIRouter(prefix="/api/v1/bot", tags=["Sponsors"])
@@ -13,6 +13,8 @@ async def get_current_bot(
     authorization: str = Header(None), 
     db: AsyncSession = Depends(get_db)
 ):
+    
+    
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid token")
     
