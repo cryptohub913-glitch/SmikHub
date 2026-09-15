@@ -1,103 +1,165 @@
-from decimal import Decimal
-from typing import List
-from fastapi import APIRouter, Header, HTTPException, Depends
-from pydantic import BaseModel
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Header
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from smikhub.db.engine import get_db_session
-from smikhub.db.models import Bot, Order, SubscriptionRecord
-from smikhub.db.order_repo import OrderRepository
-from smikhub.services.rate_limiter import check_limiter
-from smikhub.services.antifraud import AntiFraudEngine
-from smikhub.services.order_billing import charge_order_budget
-from smikhub.services.referrals import credit_referral_rewards
-from smikhub.services.postback import PostbackService
 
-router = APIRouter(prefix="/api/v1/bot/sponsors", tags=["Sponsors"])
+from smikhub.db.models import Bot, Order
+from api.deps import get_db
 
-class CheckTaskItem(BaseModel):
-    provider: str = "botohub"
-    task_id: str
+# Обрати внимание, префикс может быть просто "/", если он уже задан в main.py
+router = APIRouter(prefix="/api/v1/bot", tags=["Sponsors"])
 
-class SponsorCheckPayload(BaseModel):
-    user_id: int
-    tasks: List[CheckTaskItem]
-
-@router.get("")
-async def get_sponsors(
-    user_id: int,
-    lang: str = "ru",
-    is_premium: str = "false",
-    auth: str = Header(...),
-    session = Depends(get_db_session)
+async def get_current_bot(
+    authorization: str = Header(None), 
+    db: AsyncSession = Depends(get_db)
 ):
-    bot_res = await session.execute(select(Bot).where(Bot.integration_token == auth))
-    bot = bot_res.scalars().first()
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
+    
+    token = authorization.split(" ")[1]
+    bot = (await db.execute(select(Bot).where(Bot.integration_token == token))).scalar_one_or_none()
+    
     if not bot or not bot.is_active:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=403, detail="Bot not found or banned by admin")
+    return bot
 
-    repo = OrderRepository(session)
-    orders = await repo.get_ranked_sponsor_orders(
-        user_id=user_id,
-        lang=lang,
-        is_premium=(is_premium.lower() == "true"),
-        min_price=float(bot.min_price or 0.0),
-        limit=bot.max_sponsors
-    )
 
-    return [
-        {
-            "provider": "botohub",
-            "task_id": str(o.id),
-            "title": o.title or o.link,
-            "link": o.link,
-            "price": str(o.price_per_sub)
-        }
-        for o in orders
-    ]
-
-@router.post("/check")
-async def check_sponsors(
-    payload: SponsorCheckPayload,
-    auth: str = Header(...),
-    session = Depends(get_db_session)
+@router.get("/sponsors")
+async def get_bot_sponsors(
+    user_id: int, 
+    bot: Bot = Depends(get_current_bot), 
+    db: AsyncSession = Depends(get_db)
 ):
-    bot = (await session.execute(select(Bot).where(Bot.integration_token == auth))).scalars().first()
-    if not bot or not bot.is_active:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    sponsors = []
+    
+    # =======================================================
+    # ПРИОРИТЕТ 1: Внутренние заказы SmikHub (твоя база)
+    # =======================================================
+    # Ищем активные заказы, где денег хватает хотя бы на 1 подписку
+    stmt = select(Order).where(
+        Order.status == "active",
+        Order.remaining_budget >= Order.price_per_sub
+    ).limit(bot.max_sponsors)
+    
+    internal_orders = (await db.execute(stmt)).scalars().all()
+    
+    for order in internal_orders:
+        sponsors.append({
+            "id": f"smikhub_{order.id}",
+            "name": order.title or order.channel_username or "Спонсор",
+            "url": order.link,
+            "reward": float(bot.min_price),  # Вознаграждение по тарифу бота
+            "source": "smikhub"
+        })
+        
+    # Если мы нашли свои заказы, сразу отдаем их.
+    if sponsors:
+        return {"sponsors": sponsors}
 
-    is_throttled, cached = check_limiter.check_throttle(bot.id, payload.user_id, [t.dict() for t in payload.tasks])
-    if is_throttled:
-        return cached
-
-    is_fraud, _ = await AntiFraudEngine.evaluate_user_risk(session, payload.user_id)
-    results = []
-
-    for t in payload.tasks:
-        if is_fraud:
-            results.append({"provider": t.provider, "task_id": t.task_id, "status": "failed"})
-            continue
-        try:
-            oid = int(t.task_id)
-            ord_item = await session.get(Order, oid)
-            if ord_item and ord_item.status == "active":
-                payout = Decimal(str(ord_item.price_per_sub))
-                rec = SubscriptionRecord(
-                    order_id=ord_item.id,
-                    bot_id=bot.id,
-                    user_id=payload.user_id,
-                    payout_amount=payout,
-                    status="completed"
+    # =======================================================
+    # ПРИОРИТЕТ 2: Сторонние интеграции (Waterfall)
+    # =======================================================
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        
+        # 1. Проверяем Subgram
+        if bot.subgram_token:
+            try:
+                res = await client.get(
+                    "https://api.subgram.org/api/sponsors",
+                    headers={"Authorization": f"Bearer {bot.subgram_token}"},
+                    params={"user_id": user_id}
                 )
-                session.add(rec)
-                await charge_order_budget(session, ord_item.id, payout)
-                await credit_referral_rewards(session, bot.user_id, payout)
-                await PostbackService.trigger_task_completed(bot, payload.user_id, t.task_id, "botohub", float(payout))
-                results.append({"provider": t.provider, "task_id": t.task_id, "status": "completed"})
-            else:
-                results.append({"provider": t.provider, "task_id": t.task_id, "status": "completed"})
-        except Exception:
-            results.append({"provider": t.provider, "task_id": t.task_id, "status": "completed"})
+                if res.status_code == 200:
+                    for sp in res.json().get("sponsors", []):
+                        sponsors.append({
+                            "id": f"subgram_{sp.get('id')}",
+                            "name": sp.get("name", "Спонсор"),
+                            "url": sp.get("url"),
+                            "reward": float(bot.min_price),
+                            "source": "subgram"
+                        })
+                    if sponsors: return {"sponsors": sponsors}
+            except Exception: pass
 
-    await session.commit()
-    check_limiter.record_result(bot.id, payload.user_id, results)
-    return results
+        # 2. Проверяем Flyer
+        if bot.flyer_token:
+            try:
+                res = await client.get(
+                    "https://api.flyerhubs.com/sponsors", 
+                    headers={"Authorization": f"Bearer {bot.flyer_token}"},
+                    params={"user_id": user_id}
+                )
+                if res.status_code == 200:
+                    for sp in res.json().get("sponsors", res.json().get("data", [])):
+                        sponsors.append({
+                            "id": f"flyer_{sp.get('id')}",
+                            "name": sp.get("title", sp.get("name", "Спонсор")),
+                            "url": sp.get("link", sp.get("url")),
+                            "reward": float(bot.min_price),
+                            "source": "flyer"
+                        })
+                    if sponsors: return {"sponsors": sponsors}
+            except Exception: pass
+
+        # 3. Проверяем Traffy (Trafsly)
+        if bot.traffy_token:
+            try:
+                res = await client.get(
+                    "https://api.trafsly.com/api/v1/sponsors",
+                    headers={"Authorization": f"Bearer {bot.traffy_token}"},
+                    params={"user_id": user_id}
+                )
+                if res.status_code == 200:
+                    for sp in res.json().get("sponsors", res.json().get("data", [])):
+                        sponsors.append({
+                            "id": f"traffy_{sp.get('id')}",
+                            "name": sp.get("title", sp.get("name", "Спонсор")),
+                            "url": sp.get("link", sp.get("url")),
+                            "reward": float(bot.min_price),
+                            "source": "traffy"
+                        })
+                    if sponsors: return {"sponsors": sponsors}
+            except Exception: pass
+
+        # 4. Проверяем PiarFlow
+        if bot.piarflow_token:
+            try:
+                res = await client.get(
+                    "https://piarflow.com/api/v1/sponsors",
+                    headers={"Authorization": f"Bearer {bot.piarflow_token}"},
+                    params={"user_id": user_id}
+                )
+                if res.status_code == 200:
+                    for sp in res.json().get("sponsors", res.json().get("data", [])):
+                        sponsors.append({
+                            "id": f"piarflow_{sp.get('id')}",
+                            "name": sp.get("title", sp.get("name", "Спонсор")),
+                            "url": sp.get("link", sp.get("url")),
+                            "reward": float(bot.min_price),
+                            "source": "piarflow"
+                        })
+                    if sponsors: return {"sponsors": sponsors}
+            except Exception: pass
+
+        # 5. Проверяем TgGrass
+        if bot.tgrass_token:
+            try:
+                res = await client.get(
+                    "https://tgrass.space/api/v1/sponsors",
+                    headers={"Authorization": f"Bearer {bot.tgrass_token}"},
+                    params={"user_id": user_id}
+                )
+                if res.status_code == 200:
+                    for sp in res.json().get("sponsors", res.json().get("data", [])):
+                        sponsors.append({
+                            "id": f"tgrass_{sp.get('id')}",
+                            "name": sp.get("title", sp.get("name", "Спонсор")),
+                            "url": sp.get("link", sp.get("url")),
+                            "reward": float(bot.min_price),
+                            "source": "tgrass"
+                        })
+                    if sponsors: return {"sponsors": sponsors}
+            except Exception: pass
+
+    # Если ни внутренних заказов, ни рабочих интеграций нет — отдаём пустой список
+    return {"sponsors": []}
