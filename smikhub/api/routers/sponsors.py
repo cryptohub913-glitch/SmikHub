@@ -1,4 +1,4 @@
-import httpx
+import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -59,106 +59,113 @@ async def get_bot_sponsors(
     # =======================================================
     # ПРИОРИТЕТ 2: Сторонние интеграции (Waterfall)
     # =======================================================
-    async with httpx.AsyncClient(timeout=3.0) as client:
+    # Используем aiohttp вместо httpx
+    timeout = aiohttp.ClientTimeout(total=3.0)
+    async with aiohttp.ClientSession(timeout=timeout) as client:
         
         # 1. Проверяем Subgram
         if bot.subgram_token:
             try:
-                res = await client.get(
+                async with client.get(
                     "https://api.subgram.org/api/sponsors",
                     headers={"Authorization": f"Bearer {bot.subgram_token}"},
                     params={"user_id": user_id}
-                )
-                if res.status_code == 200:
-                    for sp in res.json().get("sponsors", []):
-                        sponsors.append({
-                            "id": f"subgram_{sp.get('id')}",
-                            "name": sp.get("name", "Спонсор"),
-                            "url": sp.get("url"),
-                            "reward": float(bot.min_price),
-                            "source": "subgram"
-                        })
-                    if sponsors: return {"sponsors": sponsors}
+                ) as res:
+                    if res.status == 200:
+                        data = await res.json()
+                        for sp in data.get("sponsors", []):
+                            sponsors.append({
+                                "id": f"subgram_{sp.get('id')}",
+                                "name": sp.get("name", "Спонсор"),
+                                "url": sp.get("url"),
+                                "reward": float(bot.min_price),
+                                "source": "subgram"
+                            })
+                        if sponsors: return {"sponsors": sponsors}
             except Exception: pass
 
         # 2. Проверяем Flyer
         if bot.flyer_token:
             try:
-                res = await client.get(
+                async with client.get(
                     "https://api.flyerhubs.com/sponsors", 
                     headers={"Authorization": f"Bearer {bot.flyer_token}"},
                     params={"user_id": user_id}
-                )
-                if res.status_code == 200:
-                    for sp in res.json().get("sponsors", res.json().get("data", [])):
-                        sponsors.append({
-                            "id": f"flyer_{sp.get('id')}",
-                            "name": sp.get("title", sp.get("name", "Спонсор")),
-                            "url": sp.get("link", sp.get("url")),
-                            "reward": float(bot.min_price),
-                            "source": "flyer"
-                        })
-                    if sponsors: return {"sponsors": sponsors}
+                ) as res:
+                    if res.status == 200:
+                        data = await res.json()
+                        for sp in data.get("sponsors", data.get("data", [])):
+                            sponsors.append({
+                                "id": f"flyer_{sp.get('id')}",
+                                "name": sp.get("title", sp.get("name", "Спонсор")),
+                                "url": sp.get("link", sp.get("url")),
+                                "reward": float(bot.min_price),
+                                "source": "flyer"
+                            })
+                        if sponsors: return {"sponsors": sponsors}
             except Exception: pass
 
         # 3. Проверяем Traffy (Trafsly)
         if bot.traffy_token:
             try:
-                res = await client.get(
+                async with client.get(
                     "https://api.trafsly.com/api/v1/sponsors",
                     headers={"Authorization": f"Bearer {bot.traffy_token}"},
                     params={"user_id": user_id}
-                )
-                if res.status_code == 200:
-                    for sp in res.json().get("sponsors", res.json().get("data", [])):
-                        sponsors.append({
-                            "id": f"traffy_{sp.get('id')}",
-                            "name": sp.get("title", sp.get("name", "Спонсор")),
-                            "url": sp.get("link", sp.get("url")),
-                            "reward": float(bot.min_price),
-                            "source": "traffy"
-                        })
-                    if sponsors: return {"sponsors": sponsors}
+                ) as res:
+                    if res.status == 200:
+                        data = await res.json()
+                        for sp in data.get("sponsors", data.get("data", [])):
+                            sponsors.append({
+                                "id": f"traffy_{sp.get('id')}",
+                                "name": sp.get("title", sp.get("name", "Спонсор")),
+                                "url": sp.get("link", sp.get("url")),
+                                "reward": float(bot.min_price),
+                                "source": "traffy"
+                            })
+                        if sponsors: return {"sponsors": sponsors}
             except Exception: pass
 
         # 4. Проверяем PiarFlow
         if bot.piarflow_token:
             try:
-                res = await client.get(
+                async with client.get(
                     "https://piarflow.com/api/v1/sponsors",
                     headers={"Authorization": f"Bearer {bot.piarflow_token}"},
                     params={"user_id": user_id}
-                )
-                if res.status_code == 200:
-                    for sp in res.json().get("sponsors", res.json().get("data", [])):
-                        sponsors.append({
-                            "id": f"piarflow_{sp.get('id')}",
-                            "name": sp.get("title", sp.get("name", "Спонсор")),
-                            "url": sp.get("link", sp.get("url")),
-                            "reward": float(bot.min_price),
-                            "source": "piarflow"
-                        })
-                    if sponsors: return {"sponsors": sponsors}
+                ) as res:
+                    if res.status == 200:
+                        data = await res.json()
+                        for sp in data.get("sponsors", data.get("data", [])):
+                            sponsors.append({
+                                "id": f"piarflow_{sp.get('id')}",
+                                "name": sp.get("title", sp.get("name", "Спонсор")),
+                                "url": sp.get("link", sp.get("url")),
+                                "reward": float(bot.min_price),
+                                "source": "piarflow"
+                            })
+                        if sponsors: return {"sponsors": sponsors}
             except Exception: pass
 
         # 5. Проверяем TgGrass
         if bot.tgrass_token:
             try:
-                res = await client.get(
+                async with client.get(
                     "https://tgrass.space/api/v1/sponsors",
                     headers={"Authorization": f"Bearer {bot.tgrass_token}"},
                     params={"user_id": user_id}
-                )
-                if res.status_code == 200:
-                    for sp in res.json().get("sponsors", res.json().get("data", [])):
-                        sponsors.append({
-                            "id": f"tgrass_{sp.get('id')}",
-                            "name": sp.get("title", sp.get("name", "Спонсор")),
-                            "url": sp.get("link", sp.get("url")),
-                            "reward": float(bot.min_price),
-                            "source": "tgrass"
-                        })
-                    if sponsors: return {"sponsors": sponsors}
+                ) as res:
+                    if res.status == 200:
+                        data = await res.json()
+                        for sp in data.get("sponsors", data.get("data", [])):
+                            sponsors.append({
+                                "id": f"tgrass_{sp.get('id')}",
+                                "name": sp.get("title", sp.get("name", "Спонсор")),
+                                "url": sp.get("link", sp.get("url")),
+                                "reward": float(bot.min_price),
+                                "source": "tgrass"
+                            })
+                        if sponsors: return {"sponsors": sponsors}
             except Exception: pass
 
     # Если ни внутренних заказов, ни рабочих интеграций нет — отдаём пустой список
