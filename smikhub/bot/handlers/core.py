@@ -14,16 +14,13 @@ from smikhub.config import BASE_URL, ADMIN_CHAT_ID
 router = Router()
 
 
-# -------------------------------------------------------------
-# FSM Состояния для создания рекламной кампании
-# -------------------------------------------------------------
 class CampaignStates(StatesGroup):
     waiting_for_budget = State()
     waiting_for_price = State()
 
 
 # -------------------------------------------------------------
-# Внутренние клавиатуры (без внешних зависимостей)
+# Клавиатуры интерфейса
 # -------------------------------------------------------------
 def kb_main_menu(is_admin: bool = False) -> InlineKeyboardMarkup:
     rows = [
@@ -105,7 +102,7 @@ def kb_back(target: str = "main_menu") -> InlineKeyboardMarkup:
 
 
 # -------------------------------------------------------------
-# Главное меню и /start
+# Главное меню
 # -------------------------------------------------------------
 @router.message(CommandStart(deep_link=True))
 @router.message(CommandStart())
@@ -176,14 +173,12 @@ async def admin_broadcast(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_CHAT_ID:
         return
     await callback.answer()
-    await callback.message.edit_text(
-        "📢 **Рассылка сообщений**\n\nФункция отправки сообщения всей базе пользователей.",
-        reply_markup=kb_back(target="admin")
-    )
+    text = "📢 **Рассылка сообщений**\n\nФункция отправки сообщения всей базе пользователей."
+    await callback.message.edit_text(text, reply_markup=kb_back(target="admin"), parse_mode="Markdown")
 
 
 # -------------------------------------------------------------
-# Кабинет пользователя
+# Кабинет
 # -------------------------------------------------------------
 @router.callback_query(F.data == "nav:cabinet")
 async def nav_cabinet(callback: types.CallbackQuery, session: AsyncSession):
@@ -291,7 +286,7 @@ async def nav_add_bot(callback: types.CallbackQuery, session: AsyncSession):
 
 
 # -------------------------------------------------------------
-# Продать ОП (Панель подключенных ботов)
+# Продать ОП
 # -------------------------------------------------------------
 @router.callback_query(F.data == "nav:sell_traffic")
 async def nav_sell_traffic(callback: types.CallbackQuery, session: AsyncSession):
