@@ -1,7 +1,7 @@
 import secrets
 from decimal import Decimal
 from aiogram import Router, F, types
-from aiogram.filters import CommandStart, CommandObject, Command
+from aiogram.filters import CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from sqlalchemy import select
@@ -57,7 +57,6 @@ async def start_cmd(message: types.Message, session: AsyncSession, command: Comm
         "Используйте кнопки ниже для управления кабинетом, ботами и рекламой."
     )
     
-    # Добавляем кнопку админки, если пользователь в ADMIN_CHAT_ID
     kb = main_menu_kb()
     if uid == ADMIN_CHAT_ID:
         kb.inline_keyboard.append([types.InlineKeyboardButton(text="🛠 Админ-панель", callback_data="nav:admin")])
