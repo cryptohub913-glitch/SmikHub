@@ -626,7 +626,7 @@ async def admin_orders_list(callback: types.CallbackQuery, session: AsyncSession
     buttons = []
     for o in orders:
         st = "🟢" if o.status == "active" else "⏸"
-        short_link = o.channel_link[:25] + "..." if len(o.channel_link) > 25 else o.channel_link
+        short_link = o.link[:25] + "..." if len(o.link) > 25 else o.link
         buttons.append([InlineKeyboardButton(text=f"{st} Заказ #{o.id} | {short_link}", callback_data=f"admin:order_view:{o.id}")])
     buttons.append([InlineKeyboardButton(text="« Назад в админку", callback_data="nav:admin")])
     await callback.message.edit_text("🛑 **Модерация заказов**\n\nВыберите заказ для управления:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="Markdown")
@@ -645,7 +645,7 @@ async def admin_order_view(callback: types.CallbackQuery, session: AsyncSession)
     text_msg = (
         f"📢 **Заказ #{order_obj.id}**\n\n"
         f"• **Создатель ID:** `{order_obj.user_id}`\n"
-        f"• **Ссылка:** {order_obj.channel_link}\n"
+        f"• **Ссылка:** {order_obj.link}\n"
         f"• **Статус:** {st}\n\n"
         f"💰 **Бюджет:** `{float(order_obj.total_budget):.2f} RUB`\n"
         f"📉 **Потрачено:** `{spent:.2f} RUB`\n"
@@ -1018,19 +1018,19 @@ async def process_promo_code(message: types.Message, state: FSMContext, session:
     code = message.text.strip().upper()
     await state.clear()
     try:
-        promo = (await session.execute(text("SELECT id, amount, activations_left FROM promocodes WHERE code = :code"), {"code": code})).mappings().first()
+        promo = (await session.execute(text("SELECT id, reward_amount as amount, max_activations - current_activations as activations_left FROM promo_codes WHERE code = :code"), {"code": code})).mappings().first()
         if not promo or promo['activations_left'] <= 0:
             await message.answer("❌ Промокод недействителен.", reply_markup=kb_cancel("nav:cabinet", "« В кабинет"))
             return
-        activation = (await session.execute(text("SELECT id FROM promo_activations WHERE user_id = :uid AND promocode_id = :pid"), {"uid": message.from_user.id, "pid": promo['id']})).mappings().first()
+        activation = (await session.execute(text("SELECT id FROM promo_activations WHERE user_id = :uid AND promo_id = :pid"), {"uid": message.from_user.id, "pid": promo['id']})).mappings().first()
         if activation:
             await message.answer("⚠️ Вы уже активировали его.", reply_markup=kb_cancel("nav:cabinet", "« В кабинет"))
             return
         user = await session.get(User, message.from_user.id)
         if user:
             user.balance += Decimal(str(promo['amount']))
-            await session.execute(text("UPDATE promocodes SET activations_left = activations_left - 1 WHERE id = :pid"), {"pid": promo['id']})
-            await session.execute(text("INSERT INTO promo_activations (user_id, promocode_id) VALUES (:uid, :pid)"), {"uid": user.id, "pid": promo['id']})
+            await session.execute(text("UPDATE promo_codes SET current_activations = current_activations + 1 WHERE id = :pid"), {"pid": promo['id']})
+            await session.execute(text("INSERT INTO promo_activations (user_id, promo_id) VALUES (:uid, :pid)"), {"uid": user.id, "pid": promo['id']})
             await session.commit()
             await message.answer(f"🎉 **Активировано!** Зачислено: **{promo['amount']} RUB**", reply_markup=kb_main_menu(is_admin_user(message.from_user.id)), parse_mode="Markdown")
     except Exception:
@@ -1208,8 +1208,19 @@ async def bot_code_snippet(callback: types.CallbackQuery, session: AsyncSession)
     await callback.answer()
     bot_id = int(callback.data.split(":")[1])
     bot_obj = await session.get(Bot, bot_id)
-    code = f"import requests\nurl = 'https://smikhub-production.up.railway.app/api/v1/bot/sponsors'\nheaders = {{'Authorization': 'Bearer {bot_obj.integration_token}'}}\nres = requests.get(url, headers=headers, params={{'user_id': message.from_user.id}}).json()"
-    await callback.message.edit_text(f"📋 **Код интеграции:**\n\n<pre><code class=\"language-python\">{code}</code></pre>", reply_markup=kb_cancel(f"bot_manage:{bot_id}", "« Назад"), parse_mode="HTML")
+    if not bot_obj or (bot_obj.user_id != callback.from_user.id and not is_admin_user(callback.from_user.id)): return
+    
+    code = (
+        "import requests\n\n"
+        "base_url = 'https://smikhub-production.up.railway.app'\n"
+        "url = f\"{base_url}/api/v1/bot/sponsors\"\n"
+        f"headers = {{'Authorization': 'Bearer {bot_obj.integration_token}'}}\n"
+        "params = {'user_id': message.from_user.id}\n"
+        "response = requests.get(url, headers=headers, params=params).json()\n"
+        "sponsors = response.get('sponsors', [])"
+    )
+    text_msg = f"📋 <b>Код интеграции:</b>\n\n<pre><code class=\"language-python\">{code}</code></pre>"
+    await callback.message.edit_text(text_msg, reply_markup=kb_cancel(f"bot_manage:{bot_id}", "« Назад"), parse_mode="HTML")
 
 @router.callback_query(F.data.startswith("bot_delete:"))
 async def bot_delete(callback: types.CallbackQuery, session: AsyncSession):
@@ -1327,7 +1338,7 @@ async def p_pr(message: types.Message, state: FSMContext, session: AsyncSession)
         return
         
     user.balance -= Decimal(str(bud))
-    order = Order(user_id=message.from_user.id, channel_id=-1001, channel_title="Канал", channel_link=data.get("channel_link"), total_budget=Decimal(str(bud)), remaining_budget=Decimal(str(bud)), cpc_price=Decimal(str(p)), status="active")
+    order = Order(user_id=message.from_user.id, channel_id=-1001, title="Канал", link=data.get("channel_link"), total_budget=Decimal(str(bud)), remaining_budget=Decimal(str(bud)), price_per_sub=Decimal(str(p)), status="active")
     session.add(order)
     await session.commit()
     await message.answer(f"✅ Кампания #{order.id} создана!", reply_markup=kb_main_menu(is_admin_user(message.from_user.id)))
@@ -1339,7 +1350,7 @@ async def order_view(callback: types.CallbackQuery, session: AsyncSession):
     o = await session.get(Order, oid)
     if not o: return
     spent = float(o.total_budget - o.remaining_budget)
-    await callback.message.edit_text(f"🛍 **Заказ #{o.id}**\nСтатус: {o.status}\nБюджет: {o.total_budget}р\nПотрачено: {spent:.2f}р", reply_markup=kb_order_control(o.id, o.status, float(o.cpc_price)), parse_mode="Markdown")
+    await callback.message.edit_text(f"🛍 **Заказ #{o.id}**\nСтатус: {o.status}\nБюджет: {o.total_budget}р\nПотрачено: {spent:.2f}р", reply_markup=kb_order_control(o.id, o.status, float(o.price_per_sub)), parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("order_toggle:"))
 async def order_toggle(callback: types.CallbackQuery, session: AsyncSession):
